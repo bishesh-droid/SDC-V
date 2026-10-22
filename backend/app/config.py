@@ -11,15 +11,16 @@ APP_VERSION = "0.1.0"
 
 
 def _load_dotenv() -> None:
-    env = BASE_DIR / ".env"
-    if not env.exists():
-        return
-    for line in env.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    # backend/.env wins over the repository-root .env; real environment variables win over both
+    for env in (BASE_DIR / ".env", BASE_DIR.parent / ".env"):
+        if not env.exists():
             continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        for line in env.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
 _load_dotenv()
@@ -30,7 +31,7 @@ def gemini_api_key() -> str:
 
 
 def gemini_models() -> list[str]:
-    raw = os.environ.get("GEMINI_MODELS", "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash")
+    raw = os.environ.get("GEMINI_MODELS", "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite")
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 

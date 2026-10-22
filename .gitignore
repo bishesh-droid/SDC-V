@@ -1,4 +1,54 @@
-backend/.env
-backend/data/*.db
+# Secrets (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+
+# Local databases / audit logs
+*.db
+*.sqlite3
+
+# Python
 __pycache__/
+*.py[cod]
 .pytest_cache/
+.venv/
+venv/
+
+# Tooling state
+.claude/
+.claude-flow/
+.swarm/
+.agents/
+.codex/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python build / test / lint artifacts
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Logs and temp
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Office lock/temp files
+~$*
+.~lock.*#
+
+# Node (if the frontend adds tooling)
+node_modules/
+
+# Benchmark run outputs (cases.jsonl stays tracked)
+benchmark/results/
+benchmark/*_results.*
