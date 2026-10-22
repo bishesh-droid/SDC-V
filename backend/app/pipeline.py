@@ -175,7 +175,9 @@ class Pipeline:
         run_id = uuid.uuid4().hex[:12]
         events: list[dict] = []
         user_text = "\n".join(m["text"] for m in messages if m.get("role") == "user")
-        extra = {"messages": messages, "attachment_chars": len(attachment)}
+        # the audit log keeps only redacted text; the attachment is never stored, only its length
+        extra = {"messages": [{**m, "text": redact(m["text"])[0]} for m in messages],
+                 "attachment_chars": len(attachment)}
 
         # 1. deterministic scope screen on the user's own words (never on the attachment)
         oos, unsafe = screen_scope(user_text)

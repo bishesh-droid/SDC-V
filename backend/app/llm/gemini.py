@@ -1,7 +1,8 @@
-"""Minimal Gemini REST client (free-tier friendly, model fallback, retries)."""
+"""Minimal Gemini REST client: model fallback, retries, a total time budget and per-model error reporting."""
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from typing import Protocol
@@ -11,6 +12,8 @@ import httpx
 from .. import config
 
 API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+LIST_API = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200"
+log = logging.getLogger("sdcv.llm")
 
 
 class LLMError(RuntimeError):
@@ -24,11 +27,14 @@ class LLM(Protocol):
 
 
 class GeminiClient:
-    def __init__(self, api_key: str | None = None, models: list[str] | None = None, timeout: float = 60.0):
+    def __init__(self, api_key: str | None = None, models: list[str] | None = None,
+                 timeout: float | None = None, budget: float | None = None):
         self.api_key = api_key or config.gemini_api_key()
         self.models = models or config.gemini_models()
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else config.llm_timeout_s()
+        self.budget = budget if budget is not None else config.llm_budget_s()
         self.last_model: str | None = None
+        self.last_errors: dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -47,29 +53,81 @@ class GeminiClient:
             "generationConfig": {"temperature": 0, "maxOutputTokens": 8192,
                                  **({"responseMimeType": "application/json"} if json_mode else {})},
         }
-        last_err = "no models configured"
+        deadline = time.monotonic() + self.budget
+        errors: dict[str, str] = {}
+        self.last_errors = errors
         for model in self.models:
             for attempt in range(2):
+                remaining = deadline - time.monotonic()
+                if remaining < 1.0:
+                    errors.setdefault("budget", f"time budget of {self.budget:g}s exhausted")
+                    return self._fail(errors)
+                t0 = time.monotonic()
                 try:
-                    r = httpx.post(API.format(model=model), json=body, timeout=self.timeout,
+                    r = httpx.post(API.format(model=model), json=body, timeout=min(self.timeout, remaining),
                                    headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"})
+                except httpx.TimeoutException:
+                    errors[model] = f"timed out after {time.monotonic() - t0:.0f}s"
+                    break  # a model that hangs is skipped, not retried
                 except httpx.HTTPError as e:
-                    last_err = f"{model}: network error {e}"
-                    time.sleep(1.0)
+                    errors[model] = f"network error {type(e).__name__}"
+                    time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
                     continue
                 if r.status_code == 200:
                     text = _extract_text(r.json())
                     if text:
                         self.last_model = model
+                        log.info("llm ok model=%s ms=%d", model, (time.monotonic() - t0) * 1000)
                         return text
-                    last_err = f"{model}: empty response"
+                    errors[model] = "empty response"
                     break
-                last_err = f"{model}: HTTP {r.status_code} {r.text[:200]}"
+                errors[model] = f"HTTP {r.status_code} {_api_message(r)}"
                 if r.status_code in (429, 500, 503) and attempt == 0:
-                    time.sleep(2.0)
+                    time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
                     continue
                 break  # try next model (404 unknown model, 400, quota, ...)
-        raise LLMError(last_err)
+        return self._fail(errors)
+
+    def _fail(self, errors: dict[str, str]):
+        log.warning("llm failed: %s", errors)
+        raise LLMError("; ".join(f"{m}: {e}" for m, e in errors.items()) or "no models configured")
+
+    # ---- diagnostics (used by /api/health?deep=1)
+    def probe(self) -> dict:
+        """One tiny real call. Never raises."""
+        if not self.api_key:
+            return {"ok": False, "error": "GEMINI_API_KEY is not set"}
+        t0 = time.monotonic()
+        saved = self.budget
+        self.budget = min(self.budget, 20.0)
+        try:
+            self.generate("Reply with the single word OK.", "OK")
+            return {"ok": True, "model": self.last_model, "latency_ms": int((time.monotonic() - t0) * 1000),
+                    "skipped": {m: e for m, e in self.last_errors.items()}}
+        except LLMError as e:
+            return {"ok": False, "error": str(e)[:400], "latency_ms": int((time.monotonic() - t0) * 1000)}
+        finally:
+            self.budget = saved
+
+    def remote_models(self) -> list[str] | None:
+        """Model IDs the API currently offers for generateContent, or None if the lookup failed."""
+        if not self.api_key:
+            return None
+        try:
+            r = httpx.get(LIST_API, headers={"x-goog-api-key": self.api_key}, timeout=10.0)
+            if r.status_code != 200:
+                return None
+            return [m["name"].removeprefix("models/") for m in r.json().get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])]
+        except (httpx.HTTPError, ValueError):
+            return None
+
+
+def _api_message(r: httpx.Response) -> str:
+    try:
+        return str(r.json()["error"]["message"])[:160]
+    except (ValueError, KeyError, TypeError):
+        return r.text[:160]
 
 
 def _extract_text(payload: dict) -> str:
