@@ -175,6 +175,8 @@ The suite reports 71 test results because some tests are parametrised.
 - `index.html` — Page structure: header with model status pill, chat and form tabs, result container, audit drawer.
 - `app.js` — Client logic: health check, chat and form submission, a minimal escaped Markdown renderer, result rendering, audit drawer, review submission, JSON download.
 - `styles.css` — Styling.
+- `package.json` — npm manifest. `npm start` runs `node server.mjs`. No third-party dependencies.
+- `server.mjs` — Node HTTP server. Serves `index.html`, `app.js` and `styles.css` (only those three files, which blocks path traversal) and proxies `/api/*` to `BACKEND_URL`.
 
 ### /benchmark
 
@@ -225,14 +227,70 @@ In `backend/app/config.py`: `MAX_REVISER_ITERATIONS = 8`, `MAX_WRITER_ATTEMPTS =
 
 ## Usage
 
-### Start the server
+### Start the backend (uvicorn)
 
 ```bash
 cd backend
-python3 -m uvicorn app.main:app --port 8000
+python3 -m pip install -r requirements.txt
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open http://localhost:8000. Add `--reload` for development. For a production-style run, bind explicitly, for example `--host 0.0.0.0 --port 8000`, behind a reverse proxy (see Deployment).
+The backend serves the JSON API under `/api` and, on its own, also serves the web page at http://127.0.0.1:8000.
+
+Development mode (auto-reload on code changes):
+
+```bash
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Production-style run (explicit single worker, because the SQLite audit lock is process-local; see Deployment):
+
+```bash
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+Bind to `0.0.0.0` only behind a firewall or reverse proxy, because the application has no authentication.
+
+### Start the frontend (npm)
+
+The frontend is a dependency-free Node.js server (Node 18 or later) that serves the static page and proxies `/api/*` to the backend, so the browser uses a single origin. Start the backend first, then in a second terminal:
+
+```bash
+cd frontend
+npm start
+```
+
+Open http://127.0.0.1:3000. Settings are read from the environment:
+
+```bash
+PORT=4000 npm start
+HOST=0.0.0.0 npm start
+BACKEND_URL=http://127.0.0.1:9000 npm start
+```
+
+- `PORT` — listening port, default `3000`.
+- `HOST` — bind address, default `127.0.0.1`.
+- `BACKEND_URL` — where `/api/*` is forwarded, default `http://127.0.0.1:8000`.
+
+If the backend is not running, the frontend returns HTTP 502 with a `backend unreachable` message for API calls.
+
+### Run both in the background
+
+```bash
+cd backend && nohup python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../backend.log 2>&1 &
+cd frontend && nohup npm start > ../frontend.log 2>&1 &
+```
+
+Stop them with `kill` on the process IDs, or with `pkill -f "uvicorn app.main:app"` and `pkill -f "node server.mjs"`. These are manual commands; there is no process supervisor configuration in the repository.
+
+### Verify the deployment
+
+```bash
+curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:3000/api/health
+```
+
+Both should return `"ok": true`. `llm_configured` must be `true` and `models` must list currently available Gemini models for natural-language mode to work.
 
 ### CLI commands
 
@@ -407,7 +465,7 @@ No Dockerfile, compose file, process manager configuration or CI/CD pipeline exi
 5. Place a reverse proxy in front that terminates TLS and adds authentication and rate limiting, since the application has neither.
 6. Persist and back up `backend/data/`.
 
-The application serves the frontend from the path `../frontend` relative to `backend`, so the directory layout must be preserved.
+The backend serves the frontend from the path `../frontend` relative to `backend`, so the directory layout must be preserved. Alternatively, run the frontend as its own process with `npm start` (see Usage) and point your reverse proxy at port 3000; it forwards `/api/*` to the backend.
 
 Scaling considerations: SQLite with a process-local lock supports a single instance. Running multiple workers works for reads but the lock does not coordinate between processes; use a server database before scaling horizontally.
 

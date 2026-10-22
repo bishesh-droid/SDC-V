@@ -1,0 +1,11 @@
+{
+  "name": "sdc-v-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static frontend and API proxy for SDC-V",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": { "node": ">=18" }
+}
