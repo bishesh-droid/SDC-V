@@ -52,3 +52,6 @@ node_modules/
 # Benchmark run outputs (cases.jsonl stays tracked)
 benchmark/results/
 benchmark/*_results.*
+
+# Local planning notes
+LLM_addition.md
