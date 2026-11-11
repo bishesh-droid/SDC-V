@@ -23,8 +23,10 @@ class FakeLLM:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.image_counts = []
 
-    def generate(self, system, user, *, json_mode=False):
+    def generate(self, system, user, *, json_mode=False, images=None):
         self.calls.append((system, user, json_mode))
+        self.image_counts.append(len(images or []))
         r = self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
         return r(user) if callable(r) else r

@@ -1,13 +1,15 @@
 """FastAPI app: JSON API plus the static frontend."""
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import threading
 import time
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import config
 from .audit import AuditLog
@@ -15,6 +17,8 @@ from .explore import explore
 from .export import report_markdown, runs_csv
 from .guardrails.input import RawIntake
 from .is456 import tables as T
+from .kb import kb_payload
+from .system_model import system_payload
 from .llm.gemini import GeminiClient
 from .pipeline import Pipeline, RunResult, tool_versions
 from .scope import scope
@@ -31,6 +35,7 @@ pipeline = Pipeline(llm, audit)
 limiter = RateLimiter()
 
 LIMITED = {"/api/chat", "/api/design", "/api/explore"}
+MODEL_PATTERN = "^(" + "|".join(config.gemini_models()) + ")$"
 STATUSES = "designed|needs_engineer|needs_info|rejected|out_of_scope|refused|error"
 
 
@@ -39,9 +44,29 @@ class ChatMessage(BaseModel):
     text: str = Field(max_length=8000)
 
 
+_IMAGE_MAGIC = {"image/png": (b"\x89PNG",), "image/jpeg": (b"\xff\xd8\xff",), "image/webp": (b"RIFF",)}
+MAX_IMAGE_B64 = 5_000_000  # ~3.7 MB of image; the browser downsizes before upload
+
+
+class ChatImage(BaseModel):
+    mime: str = Field(pattern="^image/(png|jpeg|webp)$")
+    data: str = Field(min_length=16, max_length=MAX_IMAGE_B64)
+
+    @model_validator(mode="after")
+    def genuine(self):
+        try:
+            head = base64.b64decode(self.data[:16] + "=" * (-len(self.data[:16]) % 4))
+        except (ValueError, binascii.Error):
+            raise ValueError("image data is not valid base64")
+        if not head.startswith(_IMAGE_MAGIC[self.mime]):
+            raise ValueError("image content does not match its declared type")
+        return self
+
+
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=20)
     attachment_text: str = Field(default="", max_length=20000)
+    images: list[ChatImage] = Field(default_factory=list, max_length=3)
 
 
 class ReviewRequest(BaseModel):
@@ -79,25 +104,26 @@ _probe_cache: dict = {"at": 0.0, "value": None}
 _probe_lock = threading.Lock()
 
 
-def _deep_status() -> dict:
-    """Real model call plus model-list check, cached for 60 s so health polling cannot burn quota."""
+def _deep_status(model: str | None = None) -> dict:
+    """Real model call plus model-list check, cached for 60 s per model so health polling cannot burn quota."""
     with _probe_lock:
-        if _probe_cache["value"] and time.monotonic() - _probe_cache["at"] < 60:
+        if _probe_cache["value"] and _probe_cache.get("model") == model and time.monotonic() - _probe_cache["at"] < 60:
             return {**_probe_cache["value"], "cached": True}
-        probe = llm.probe()
+        probe = (llm.for_model(model) if model else llm).probe()
         remote = llm.remote_models()
         value = {"probe": probe, "unavailable_models": ([m for m in llm.models if m not in remote] if remote else None)}
-        _probe_cache.update(at=time.monotonic(), value=value)
+        _probe_cache.update(at=time.monotonic(), value=value, model=model)
         return {**value, "cached": False}
 
 
 @app.get("/api/health")
-def health(deep: bool = False):
-    out = {"ok": True, "llm_configured": llm.available, "models": llm.models, "code_edition": T.CODE_EDITION,
+def health(deep: bool = False, model: str | None = Query(None, pattern=MODEL_PATTERN)):
+    out = {"ok": True, "llm_configured": llm.available, "models": llm.models, "model_options": config.MODEL_OPTIONS, "default_model": config.DEFAULT_MODEL,
+           "code_edition": T.CODE_EDITION,
            "auth_required": bool(config.api_token()), "rate_limit_per_min": config.rate_limit_per_min(),
            "versions": tool_versions()}
     if deep:
-        out["llm"] = _deep_status()
+        out["llm"] = _deep_status(model)
     return out
 
 
@@ -112,15 +138,26 @@ def get_scope():
     return scope()
 
 
+@app.get("/api/kb")
+def knowledge_base():
+    return kb_payload()
+
+
+@app.get("/api/system")
+def system_model():
+    return system_payload()
+
+
 # ----------------------------------------------------------------------- design
 @app.post("/api/design", response_model=RunResult)
-def design(raw: RawIntake):
-    return pipeline.run_structured(raw)
+def design(raw: RawIntake, model: str | None = Query(None, pattern=MODEL_PATTERN)):
+    return pipeline.with_model(model).run_structured(raw)
 
 
 @app.post("/api/chat", response_model=RunResult)
-def chat(req: ChatRequest):
-    return pipeline.run_chat([m.model_dump() for m in req.messages], req.attachment_text)
+def chat(req: ChatRequest, model: str | None = Query(None, pattern=MODEL_PATTERN)):
+    return pipeline.with_model(model).run_chat([m.model_dump() for m in req.messages], req.attachment_text,
+                             [i.model_dump() for i in req.images])
 
 
 @app.post("/api/explore")
@@ -176,7 +213,7 @@ def review(run_id: str, req: ReviewRequest):
 
 
 if config.FRONTEND_DIR.exists():
-    ASSETS = {"app.js": "text/javascript", "bg.js": "text/javascript", "styles.css": "text/css"}
+    ASSETS = {"app.js": "text/javascript", "styles.css": "text/css"}
 
     @app.get("/static/{name}")
     def static_asset(name: str):

@@ -23,7 +23,7 @@ class LLMError(RuntimeError):
 class LLM(Protocol):
     name: str
 
-    def generate(self, system: str, user: str, *, json_mode: bool = False) -> str: ...
+    def generate(self, system: str, user: str, *, json_mode: bool = False, images: list[dict] | None = None) -> str: ...
 
 
 class GeminiClient:
@@ -36,6 +36,11 @@ class GeminiClient:
         self.last_model: str | None = None
         self.last_errors: dict[str, str] = {}
 
+    def for_model(self, model: str | None) -> "GeminiClient":
+        """A per-request client that tries `model` first and falls back to the other configured models."""
+        order = ([model] if model else []) + [m for m in self.models if m != model]
+        return GeminiClient(self.api_key, order, self.timeout, self.budget)
+
     @property
     def name(self) -> str:
         return self.last_model or (self.models[0] if self.models else "gemini")
@@ -44,12 +49,14 @@ class GeminiClient:
     def available(self) -> bool:
         return bool(self.api_key)
 
-    def generate(self, system: str, user: str, *, json_mode: bool = False) -> str:
+    def generate(self, system: str, user: str, *, json_mode: bool = False, images: list[dict] | None = None) -> str:
+        """`images` is a list of {"mime": "image/png", "data": <base64>} sent as inline parts after the text."""
         if not self.api_key:
             raise LLMError("GEMINI_API_KEY is not set")
+        parts = [{"text": user}] + [{"inlineData": {"mimeType": i["mime"], "data": i["data"]}} for i in images or []]
         body = {
             "systemInstruction": {"parts": [{"text": system}]},
-            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {"temperature": 0, "maxOutputTokens": 8192,
                                  **({"responseMimeType": "application/json"} if json_mode else {})},
         }

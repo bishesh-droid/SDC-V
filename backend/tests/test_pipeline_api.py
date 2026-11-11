@@ -121,3 +121,42 @@ def test_api_endpoints(tmp_path, monkeypatch):
     bad = c.post("/api/design", json={**body, "cover": {"value": 10, "unit": "mm"}}).json()
     assert bad["status"] == "rejected"
     assert c.post("/api/chat", json={"messages": [{"role": "user", "text": "beam 5 m"}]}).json()["status"] == "error"
+
+
+# ------------------------------------------------------------------ images
+PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+IMG = [{"mime": "image/png", "data": PNG_B64}]
+
+
+def intake_with_image(image_text, **over):
+    d = json.loads(intake_json(**over))
+    d["image_text"] = image_text
+    return json.dumps(d)
+
+
+def test_image_values_are_grounded_in_the_transcription(audit):
+    text = "Simply supported, span 6 m, b 300 mm, D 550 mm, cover 30 mm, M25, Fe500, DL 15 kN/m, LL 12 kN/m, moderate"
+    llm = FakeLLM([intake_with_image(text), "## Summary\nok\n**" + STAMP + "**"])
+    res = pipe(llm, audit).run_chat([{"role": "user", "text": "Design the beam in the picture"}], "", IMG)
+    assert llm.image_counts[0] == 1
+    assert res.status == "designed" and res.image_text == text
+    assert any(e["type"] == "images_read" for e in res.guardrail_events)
+    assert audit.get(res.run_id)["record"]["messages"][0]["text"] == "Design the beam in the picture"
+
+
+def test_image_values_not_in_transcription_or_text_are_dropped(audit):
+    llm = FakeLLM([intake_with_image("span 6 m only")])
+    res = pipe(llm, audit).run_chat([{"role": "user", "text": "Design the beam in the picture"}], "", IMG)
+    assert res.status == "needs_info"
+    assert any(e["type"] == "ungrounded_values_dropped" for e in res.guardrail_events)
+
+
+def test_chat_endpoint_rejects_bad_images(monkeypatch, tmp_path):
+    from app import main
+    monkeypatch.setattr(main, "pipeline", Pipeline(FakeLLM([intake_json()]), AuditLog(tmp_path / "b.db")))
+    c = TestClient(main.app)
+    msg = [{"role": "user", "text": BRIEF}]
+    assert c.post("/api/chat", json={"messages": msg, "images": [{"mime": "image/svg+xml", "data": PNG_B64}]}).status_code == 422
+    assert c.post("/api/chat", json={"messages": msg, "images": [{"mime": "image/jpeg", "data": PNG_B64}]}).status_code == 422
+    assert c.post("/api/chat", json={"messages": msg, "images": IMG * 4}).status_code == 422
+    assert c.post("/api/chat", json={"messages": msg, "images": IMG}).status_code == 200

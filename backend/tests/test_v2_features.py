@@ -202,7 +202,7 @@ def test_security_headers_and_static_whitelist(client):
     r = client.get("/api/health")
     assert r.headers["X-Content-Type-Options"] == "nosniff" and "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
     assert client.get("/static/app.js").status_code == 200
-    assert client.get("/static/bg.js").status_code == 200 and client.get("/static/styles.css").status_code == 200
+    assert client.get("/static/styles.css").status_code == 200 and client.get("/static/bg.js").status_code == 404
     assert client.get("/static/server.mjs").status_code == 404
     assert client.get("/static/package.json").status_code == 404
 

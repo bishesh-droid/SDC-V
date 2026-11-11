@@ -1,4 +1,6 @@
-"""Runtime configuration. Reads backend/.env, then the repository-root .env, then the environment."""
+"""Runtime configuration. Reads backend/.env, then the repository-root .env, then the environment.
+
+The Gemini API key is the only model-related setting read from the environment; models are chosen in the web UI."""
 from __future__ import annotations
 
 import os
@@ -37,9 +39,20 @@ def gemini_api_key() -> str:
     return os.environ.get("GEMINI_API_KEY", "").strip()
 
 
+# Models offered in the web UI. Only the API key comes from the environment; the model is chosen per request.
+# The first entry is the default. Each was checked against the live API (plain and JSON-mode calls) on 11 Nov 2026.
+MODEL_OPTIONS = [
+    {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite", "note": "Fastest, good for most briefs (default)"},
+    {"id": "gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash-Lite", "note": "Fast and stable"},
+    {"id": "gemini-3-flash-preview", "label": "Gemini 3 Flash (preview)", "note": "Fast, preview release"},
+    {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash", "note": "Balanced speed and quality"},
+    {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "note": "Newest working Flash, slower"},
+]
+DEFAULT_MODEL = MODEL_OPTIONS[0]["id"]
+
+
 def gemini_models() -> list[str]:
-    raw = os.environ.get("GEMINI_MODELS", "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite")
-    return [m.strip() for m in raw.split(",") if m.strip()]
+    return [m["id"] for m in MODEL_OPTIONS]
 
 
 def llm_timeout_s() -> float:

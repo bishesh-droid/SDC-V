@@ -14,7 +14,7 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
   "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
 };
-const ASSETS = new Set(["index.html", "app.js", "bg.js", "styles.css"]);
+const ASSETS = new Set(["index.html", "app.js", "styles.css"]);
 
 function proxy(req, res) {
   const up = http.request({

@@ -6,71 +6,108 @@
 <title>SDC-V · Structural Design Copilot</title>
 <meta name="description" content="Guardrailed AI drafting of RCC beams to IS 456:2000. The AI drafts; the code checks; the engineer signs.">
 <link rel="stylesheet" href="/static/styles.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231d3557'/%3E%3Crect x='7' y='9' width='18' height='14' fill='none' stroke='%23f1e9d8' stroke-width='2.5'/%3E%3Ccircle cx='11' cy='20' r='1.8' fill='%23f1e9d8'/%3E%3Ccircle cx='16' cy='20' r='1.8' fill='%23f1e9d8'/%3E%3Ccircle cx='21' cy='20' r='1.8' fill='%23f1e9d8'/%3E%3C/svg%3E">
 </head>
 <body>
-<canvas id="bg" aria-hidden="true"></canvas>
-<div class="fx" aria-hidden="true"></div>
-<div id="progress" aria-hidden="true"></div>
 <header class="top">
   <div class="brand">
-    <div class="logo" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="5" y="7" width="22" height="18" rx="1.5"/><circle cx="10" cy="21" r="2"/><circle cx="16" cy="21" r="2"/><circle cx="22" cy="21" r="2"/></svg></div>
-    <div>
-      <h1>SDC-V <span>Structural Design Copilot</span></h1>
-      <p class="tag" id="tagline" data-text="The AI drafts; the code checks; the engineer signs.">The AI drafts; the code checks; the engineer signs.</p>
-    </div>
+    <h1>SDC-V <span>Structural Design Copilot</span></h1>
+    <p class="tag">The AI drafts; the code checks; the engineer signs.</p>
   </div>
   <div class="pills">
-    <span class="pill clock" id="clock" aria-label="UTC time">--:--:-- UTC</span>
     <span class="pill" id="pill-code">IS 456:2000</span>
+    <label class="modelpick" for="model-select">Model
+      <select id="model-select" aria-label="Gemini model"></select>
+    </label>
     <button class="pill" id="pill-llm" type="button" title="Open status">checking Gemini…</button>
     <button class="ghost sm" id="btn-token" type="button" hidden>API token</button>
-    <button class="ghost sm" id="btn-theme" type="button" aria-label="Toggle colour theme">Theme</button>
   </div>
 </header>
 
 <nav class="nav" role="tablist" aria-label="Sections">
-  <button role="tab" data-view="design" aria-selected="true">Design</button>
+  <button role="tab" data-view="home" aria-selected="true">Home</button>
+  <button role="tab" data-view="chat" aria-selected="false">Assistant</button>
+  <button role="tab" data-view="design" aria-selected="false">Form design</button>
   <button role="tab" data-view="explore" aria-selected="false">Explore sections</button>
+  <button role="tab" data-view="kb" aria-selected="false">Knowledge base</button>
+  <button role="tab" data-view="system" aria-selected="false">Expert system</button>
   <button role="tab" data-view="history" aria-selected="false">History <span class="count" id="count-history" hidden></span></button>
-  <button role="tab" data-view="rules" aria-selected="false">Rules</button>
   <button role="tab" data-view="scope" aria-selected="false">Scope &amp; status</button>
 </nav>
 
 <main>
-<!-- ============================== DESIGN -->
-<div class="view layout" id="view-design">
-  <section class="panel input" aria-label="Design input">
-    <div class="tabs" role="tablist">
-      <button role="tab" id="tab-chat" aria-selected="true" aria-controls="pane-chat">Describe in words</button>
-      <button role="tab" id="tab-form" aria-selected="false" aria-controls="pane-form">Structured form</button>
-    </div>
+<!-- ============================== HOME -->
+<div class="view" id="view-home">
+  <section class="hero">
+    <h2>Draft reinforced-concrete beam designs to IS 456:2000, with every number checked.</h2>
+    <p>Describe a beam in plain English or fill in a form. A deterministic calculator produces the numbers, clause-tagged rules decide pass or fail, and the language model only reads your brief and explains the result.</p>
+    <div class="row"><button class="primary" type="button" data-go="chat">Open the assistant</button><button class="ghost" type="button" data-go="design">Use the form</button></div>
+  </section>
 
-    <div id="pane-chat" role="tabpanel">
-      <div class="thread" id="thread" aria-live="polite"></div>
-      <form id="chat-form" autocomplete="off">
-        <label class="sr" for="brief">Your brief</label>
-        <textarea id="brief" rows="4" maxlength="8000" placeholder="e.g. Simply supported beam, 6 m span, 300 x 550 mm, 30 mm cover, M25 and Fe500, dead load 15 kN/m, live load 12 kN/m, moderate exposure"></textarea>
+  <section class="blk">
+    <div class="head"><h3>Example run</h3><button class="ghost sm" id="demo-toggle" type="button">Pause</button></div>
+    <p class="hint" id="demo-caption">A 250 x 400 mm beam is too shallow. Watch the pipeline find a section that passes.</p>
+    <ol class="demo" id="demo"></ol>
+  </section>
+
+  <section class="blk">
+    <h3>What it can do</h3>
+    <ul class="can">
+      <li><b>Design</b> singly reinforced rectangular beams (simply supported or cantilever, UDL): flexure, shear, deflection, bar and stirrup detailing.</li>
+      <li><b>Understand</b> a written brief or a photo of a problem, and ask for missing values instead of guessing.</li>
+      <li><b>Verify</b> with 19 clause-tagged rules, then enlarge the section automatically if a check fails.</li>
+      <li><b>Explore</b> nearby sections and find the lightest one that passes.</li>
+      <li><b>Explain</b> in a narrative where every number is traced back to the verified result.</li>
+      <li><b>Record</b> every run in an audit log, with CSV and Markdown export.</li>
+      <li><b>Look up</b> structural engineering reference material in the knowledge base.</li>
+      <li><b>Inspect</b> the facts, rules and meta-rules behind the calculator in the expert system view.</li>
+    </ul>
+  </section>
+
+  <section class="blk">
+    <h3>Viewable database</h3>
+    <div class="dbgrid" id="db-cards"><p class="hint">Loading...</p></div>
+  </section>
+</div>
+
+<!-- ============================== CHAT -->
+<div class="view" id="view-chat" hidden>
+  <section class="panel chatwrap" aria-label="Chat">
+    <div class="chatlog" id="thread" aria-live="polite"></div>
+    <div class="examples" id="examples">
+      <span>Try:</span>
+      <button type="button" class="chip" data-ex="0">Complete brief</button>
+      <button type="button" class="chip" data-ex="1">Undersized section</button>
+      <button type="button" class="chip" data-ex="2">Missing details</button>
+      <button type="button" class="chip" data-ex="3">T-beam (out of scope)</button>
+      <button type="button" class="chip" data-ex="4">Injection attempt</button>
+    </div>
+    <form id="chat-form" autocomplete="off">
+      <div class="thumbs" id="thumbs" hidden></div>
+      <div class="composer" id="composer">
+        <button type="button" class="ghost iconbtn" id="btn-attach" aria-label="Attach images" title="Attach images (PNG, JPEG, WebP; up to 3). You can also paste or drop them.">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l9-9a3.3 3.3 0 0 1 4.7 4.7l-9 9a1.7 1.7 0 0 1-2.4-2.4l8.3-8.3"/></svg>
+        </button>
+        <input type="file" id="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+        <label class="sr" for="brief">Your message</label>
+        <textarea id="brief" rows="1" maxlength="8000" placeholder="Describe the beam, or attach a photo or sketch of the problem…"></textarea>
+        <button type="submit" class="primary" id="btn-send">Send</button>
+      </div>
+      <div class="composer-foot">
         <details class="attach">
           <summary>Paste a spec or tender extract (treated as data, never as instructions)</summary>
           <textarea id="attachment" rows="3" maxlength="20000" placeholder="Optional pasted text…"></textarea>
         </details>
-        <div class="row">
-          <button type="submit" class="primary" id="btn-send">Draft design</button>
-          <button type="button" class="ghost" id="btn-reset">New brief</button>
-        </div>
-      </form>
-      <div class="examples">
-        <span>Try:</span>
-        <button type="button" class="chip" data-ex="0">Complete brief</button>
-        <button type="button" class="chip" data-ex="1">Undersized section</button>
-        <button type="button" class="chip" data-ex="2">Missing details</button>
-        <button type="button" class="chip" data-ex="3">T-beam (out of scope)</button>
-        <button type="button" class="chip" data-ex="4">Injection attempt</button>
+        <button type="button" class="ghost sm" id="btn-reset">New chat</button>
       </div>
-    </div>
+    </form>
+  </section>
+</div>
 
-    <form id="pane-form" role="tabpanel" hidden autocomplete="off">
+<!-- ============================== DESIGN -->
+<div class="view layout" id="view-design" hidden>
+  <section class="panel input" aria-label="Design input">
+    <h2>Form design</h2>
+    <form id="pane-form" autocomplete="off">
       <div class="grid2" data-fields="design"></div>
       <p class="hint">Loads are characteristic values. Self-weight and the 1.5 load factor are added by the calculator, never by the user or the AI. This form skips the language model entirely.</p>
       <button type="submit" class="primary" id="btn-form">Run deterministic design</button>
@@ -79,7 +116,6 @@
 
   <section class="panel output" aria-label="Result" aria-live="polite">
     <div class="empty" id="empty">
-      <svg viewBox="0 0 120 80" aria-hidden="true"><rect class="draw" x="22" y="12" width="76" height="56" rx="3"/><line class="draw" x1="22" y1="22" x2="98" y2="22"/><circle cx="40" cy="58" r="4"/><circle cx="60" cy="58" r="4"/><circle cx="80" cy="58" r="4"/></svg>
       <h2>No design yet</h2>
       <p>Every number in the report comes from a deterministic IS 456 calculator and clause-tagged rules. The language model only reads your brief and explains the result.</p>
       <ol class="flow">
@@ -119,13 +155,25 @@
   </section>
 </div>
 
-<!-- ============================== RULES -->
-<div class="view" id="view-rules" hidden>
+<!-- ============================== KNOWLEDGE BASE -->
+<div class="view" id="view-kb" hidden>
   <section class="panel wide">
-    <div class="head"><h2>Verifier rule registry</h2><span class="src" id="rules-count"></span></div>
-    <p class="hint">Every pass or fail verdict comes from one of these rules. Each carries the IS 456 clause it checks. "Revisable" means enlarging the section can fix a failure; non-revisable failures go to an engineer. The two cross-check rules recompute the design moment and effective depth independently, so a calculator fault shows up as a failed check.</p>
-    <input id="rules-filter" type="search" placeholder="Filter by name, clause or id" aria-label="Filter rules">
-    <div class="tablewrap"><table id="rules-table"><thead><tr><th>Rule</th><th>Check</th><th>Clause</th><th>Severity</th><th>Revisable</th></tr></thead><tbody></tbody></table></div>
+    <div class="head"><h2>Knowledge base</h2><span class="src" id="kb-count"></span></div>
+    <label class="sr" for="kb-search">Search the knowledge base</label>
+    <input id="kb-search" type="search" placeholder="Search keywords, e.g. development length, tau_c, wind, M25, Hardy Cross" autocomplete="off">
+    <div class="topics" id="kb-topics" role="group" aria-label="Topics"></div>
+    <div id="kb-list"><p class="hint">Loading...</p></div>
+    <p class="hint" id="kb-note"></p>
+  </section>
+</div>
+
+<!-- ============================== EXPERT SYSTEM -->
+<div class="view" id="view-system" hidden>
+  <section class="panel wide">
+    <div class="head"><h2>Expert system</h2><span class="src" id="sys-summary"></span></div>
+    <p class="hint">How the calculator is built as a knowledge-based system: the facts it holds, the rules it applies, the meta-rules that control those rules, how the modules connect, and the interface around them. Everything here is read from the running code.</p>
+    <div class="topics" id="sys-tabs" role="tablist" aria-label="Expert system sections"></div>
+    <div id="sys-body"><p class="hint">Loading...</p></div>
   </section>
 </div>
 
@@ -152,7 +200,6 @@
 </dialog>
 
 <footer>Draft planning tool. Any design produced requires review and sign-off by a licensed structural engineer. · BITS Pilani · CE F417</footer>
-<script src="/static/bg.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -52,6 +52,7 @@ class RunResult(BaseModel):
     report: ReportData | None = None
     narrative: str | None = None
     narrative_source: str | None = None
+    image_text: str | None = None
     sketch_svg: str | None = None
     guardrail_events: list[dict] = Field(default_factory=list)
     llm_model: str | None = None
@@ -105,6 +106,11 @@ class Pipeline:
     def __init__(self, llm: LLM | None, audit: AuditLog | None = None):
         self.llm = llm
         self.audit = audit
+
+    def with_model(self, model: str | None) -> "Pipeline":
+        """A pipeline for one request whose model calls try `model` first (no effect without a model client)."""
+        pick = getattr(self.llm, "for_model", None)
+        return Pipeline(pick(model) if pick else self.llm, self.audit)
 
     # -- helpers
     def _finish(self, res: RunResult, record_extra: dict | None = None) -> RunResult:
@@ -171,13 +177,14 @@ class Pipeline:
             narrative_source=source, sketch_svg=section_svg(final, des), guardrail_events=events), extra)
 
     # -- natural-language mode
-    def run_chat(self, messages: list[dict], attachment: str = "") -> RunResult:
+    def run_chat(self, messages: list[dict], attachment: str = "", images: list[dict] | None = None) -> RunResult:
+        images = images or []
         run_id = uuid.uuid4().hex[:12]
         events: list[dict] = []
         user_text = "\n".join(m["text"] for m in messages if m.get("role") == "user")
         # the audit log keeps only redacted text; the attachment is never stored, only its length
         extra = {"messages": [{**m, "text": redact(m["text"])[0]} for m in messages],
-                 "attachment_chars": len(attachment)}
+                 "attachment_chars": len(attachment), "image_count": len(images)}
 
         # 1. deterministic scope screen on the user's own words (never on the attachment)
         oos, unsafe = screen_scope(user_text)
@@ -219,12 +226,18 @@ class Pipeline:
             events.append({"type": "pii_redacted", "count": n_red})
 
         try:
-            intake = run_intake(self.llm, "\n".join(transcript), att)
+            intake = run_intake(self.llm, "\n".join(transcript), att, images)
         except LLMError as e:
             events.append({"type": "intake_llm_error", "detail": str(e)[:300]})
             return self._finish(RunResult(run_id=run_id, status="error", mode="chat", guardrail_events=events,
                                           message=f"The language model could not be reached or returned unusable output ({str(e)[:160]})."), extra)
         extra["intake"] = intake.model_dump()
+        image_text = (intake.image_text or "").strip()[:4000] if images else ""
+        if images:
+            events.append({"type": "images_read", "count": len(images), "chars": len(image_text)})
+            hits = detect_injection(image_text)
+            if hits:
+                events.append({"type": "injection_suspected", "where": "image", "patterns": hits})
 
         if intake.intent == "unsafe_request":
             return self._finish(RunResult(run_id=run_id, status="refused", mode="chat", guardrail_events=events,
@@ -236,7 +249,7 @@ class Pipeline:
 
         # 4. grounding: every extracted number must appear in what the user/attachment wrote
         raw = intake.fields
-        grounded_pool = numbers_in(user_text) | numbers_in(attachment)
+        grounded_pool = numbers_in(user_text) | numbers_in(attachment) | numbers_in(image_text)
         ungrounded = []
         data = raw.model_dump()
         for name in ("span", "b", "D", "cover", "dead_load", "live_load"):
@@ -264,7 +277,10 @@ class Pipeline:
                                           missing=["dead_load", "live_load"], guardrail_events=events), extra)
 
         out = normalise(raw)
-        return self._from_normalised(run_id, "chat", out, events, extra)
+        res = self._from_normalised(run_id, "chat", out, events, extra)
+        if image_text:
+            res.image_text = image_text
+        return res
 
 
 def _question(missing: list[str]) -> str:
