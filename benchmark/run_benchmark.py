@@ -3,6 +3,12 @@
   python run_benchmark.py            # structured + deterministic-screen cases (no API key needed)
   python run_benchmark.py --llm      # also runs chat cases through Gemini (needs GEMINI_API_KEY)
   python run_benchmark.py --baseline # also asks plain Gemini (no tools) for Ast on golden cases and scores it
+  python run_benchmark.py --guards-only  # only the pre-flight checks and the regex-guard metrics (instant, no model)
+  python run_benchmark.py --no-checks    # skip the pre-flight checks (not recommended)
+
+Always printed first: pre-flight checks on the case files (label leakage, empty or oversized inputs, duplicates).
+Always printed last: metrics for the deterministic guards (screen_scope, detect_injection) on cases.jsonl and
+guard_cases.jsonl: confusion matrix, safety, usability, false blocks, MCC with a bootstrap interval, trivial baselines.
 """
 import argparse, collections, json, math, re, sys, tempfile
 from pathlib import Path
@@ -13,6 +19,8 @@ from app.guardrails.input import RawIntake
 from app.guardrails.output import trace_numbers
 from app.llm.gemini import GeminiClient, LLMError
 from app.pipeline import Pipeline
+
+import checks, guard_eval, metrics
 
 
 def ref_ast(case, des):
@@ -26,8 +34,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--llm", action="store_true")
     ap.add_argument("--baseline", action="store_true")
+    ap.add_argument("--guards-only", action="store_true")
+    ap.add_argument("--no-checks", action="store_true")
     a = ap.parse_args()
     cases = [json.loads(l) for l in open(Path(__file__).parent / "cases.jsonl")]
+    if not a.no_checks:
+        print("pre-flight: cases.jsonl")
+        ok1 = checks.report(checks.check_cases(cases))
+        print("pre-flight: guard_cases.jsonl")
+        ok2 = checks.report(checks.check_guard_cases(guard_eval.load_jsonl("guard_cases.jsonl")))
+        if not (ok1 and ok2):
+            sys.exit("pre-flight checks failed: fix the case files, or pass --no-checks to run anyway")
+    if a.guards_only:
+        guard_report()
+        return
     llm = GeminiClient()
     want_llm = a.llm or a.baseline
     use_llm = want_llm and llm.available
@@ -83,6 +103,23 @@ def main():
             if nums and abs(float(nums[-1]) - res.design.ast_flex) <= 0.02 * res.design.ast_flex:
                 hit += 1
         print(f"\nPlain-LLM baseline within 2% of the verified Ast on golden cases: {hit}/{n}")
+
+    guard_report()
+
+
+def guard_report():
+    """Metrics for the deterministic regex guards. No model is involved, so this never needs a key."""
+    rows = guard_eval.evaluate(guard_eval.all_rows())
+    for task, what in (("scope", "scope / unsafe screen  (BLOCK = refuse)"), ("injection", "injection detector  (BLOCK = flag)")):
+        for label, rs in (("all sources", [r for r in rows if r["task"] == task]),
+                          ("guard_cases only", [r for r in rows if r["task"] == task and r["source"] == "guard_cases"])):
+            print("\n" + metrics.format_report(f"{what} - {label}", [r["gold"] for r in rs], [r["pred"] for r in rs]))
+    bad = guard_eval.failures(rows)
+    gaps = [r for r in rows if r["known_gap"]]
+    print(f"\nguard failures (excluding known gaps): {len(bad)}")
+    for r in bad:
+        print(f"  {r['id']}: should {r['gold']}, got {r['pred']}: {r['text'][:80]!r} {r['detail']}")
+    print(f"known gaps (need the semantic layer): {sum(r['pred'] != r['gold'] for r in gaps)} of {len(gaps)} still missed")
 
 
 if __name__ == "__main__":

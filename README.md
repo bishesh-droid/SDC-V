@@ -350,6 +350,8 @@ Both should return `"ok": true`. `llm_configured` must be `true` and `models` mu
 ```bash
 cd backend && python3 -m pytest -q
 cd benchmark && python3 run_benchmark.py
+cd benchmark && python3 run_benchmark.py --guards-only   # pre-flight checks and regex-guard metrics, no model, instant
+cd benchmark && python3 generate_guard_cases.py          # regenerates guard_cases.jsonl
 cd benchmark && python3 run_benchmark.py --llm
 cd benchmark && python3 run_benchmark.py --baseline
 cd benchmark && python3 generate_cases.py

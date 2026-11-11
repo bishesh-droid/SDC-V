@@ -180,38 +180,69 @@ def _friendly(loc: str, err: dict, vals: dict) -> str:
 
 
 # ------------------------------------------------------------- scope screening
+# A pattern that matches inside a negation ("not a T-beam", "no point loads", "non-prestressed") does not count:
+# the user is saying what the beam is NOT. Only a match with no negation in the words just before it refuses.
+_NEG = re.compile(r"\b(?:no|not|non|without|excluding|exclude|neglect\w*|omit\w*|except|never)\b[\s\-:,]*(?:\w+[\s\-]+){0,2}$", re.I)
+
+
+def _negated(text: str, start: int) -> bool:
+    return bool(_NEG.search(text[max(0, start - 30):start]))
+
+
+def _hit(pattern: str, text: str) -> bool:
+    """True if `pattern` matches somewhere that is not negated."""
+    return any(not _negated(text, m.start()) for m in re.finditer(pattern, text, re.I))
+
+
 _OOS_PATTERNS = [
     (r"\bt[- ]?beam", "flanged (T-beam) sections"), (r"\bl[- ]?beam", "flanged (L-beam) sections"),
     (r"\bflanged", "flanged sections"), (r"doubly[- ]reinforced", "doubly reinforced beams"),
     (r"continuous (beam|span)|two[- ]span|three[- ]span|multi[- ]span", "continuous beams"),
-    (r"design (of )?(an? |the )?(one[- ]way |two[- ]way |rcc )*slab", "slabs"),
-    (r"design (of )?(an? |the )?(short |long |rcc |axially loaded )*column", "columns"),
-    (r"design (of )?(an? |the )?(isolated |combined |rcc |pile )*(footing|foundation|raft)", "footings / foundations"),
+    (r"design (of )?(an? |the )?(\d+(\.\d+)? ?(x|×|by|mm|m|cm)? ?)*(one[- ]way |two[- ]way |rcc |flat |floor |roof )*slabs?\b", "slabs"),
+    (r"design (of )?(an? |the )?(\d+(\.\d+)? ?(x|×|by|mm|m|cm)? ?)*(short |long |rcc |axially loaded |square |circular |rectangular |slender )*columns?\b(?![- ](supported|support|spacing|grid|line|head|cap))", "columns"),
+    (r"design (of )?(an? |the )?(isolated |combined |rcc |pile )*(footing|foundation|raft|pile cap)", "footings / foundations"),
     (r"pre-?stress|post-?tension", "prestressed concrete"), (r"eurocode|\bEC ?2\b|\bACI\b|\bAS ?3600\b|\bBS ?8110\b", "design codes other than IS 456:2000"),
-    (r"13920|ductile detail|seismic detail|earthquake", "seismic / ductile detailing (IS 13920)"),
+    (r"13920|ductile detail|seismic (detail\w*|design|loads?|forces?|analysis)|earthquake[- ](resistant|design|detail\w*|loads?|forces?)"
+     r"|(design\w*|detail\w*|check\w*) (for|against|to resist) (an? )?(earthquake|seismic)|include (earthquake|seismic)", "seismic / ductile detailing (IS 13920)"),
     (r"\bIS ?800\b|steel (beam|section)|\bI[- ]section", "steel design (IS 800)"),
-    (r"retaining wall|shear wall|\bdeep beam", "walls / retaining structures / deep beams"),
+    (r"design (of )?(an? |the )?(rcc |shear |retaining |basement )*walls?\b|\bdeep beam", "walls / retaining structures / deep beams"),
     (r"point load|concentrated load|\bUDL ?\+ ?point", "point loads (only uniformly distributed loads are supported)"),
 ]
+# Unsafe requests are about the design itself: approve it, certify it, remove the member, cut the safety margin.
+# A bare "approved drawings", "certified bars" or "sign-off by the engineer" is ordinary engineering language.
 _UNSAFE_PATTERNS = [
-    (r"\b(certify|certified|approve[ds]?|sign[- ]?off|stamp(ed)? as|guarantee)\b", "approving or certifying a design"),
+    (r"\b(certify|certifying|approve|approving|sign[- ]?off(?: on)?|signing off(?: on)?|stamp|stamping|guarantee|guaranteeing|rubber[- ]?stamp)\b\s+(?:that\s+)?(?:this|the|my|our|it|these|that)\b", "approving or certifying a design"),
+    (r"\b(stamp(ed)?|mark(ed)?|label(l?ed)?|declare|state|call) (it|this|the (design|beam|result)|this (design|beam)) (as )?(safe|approved|certified|compliant|passed)\b", "approving or certifying a design"),
     (r"(reduce|lower|cut|ignore|skip|remove|waive).{0,25}(safety|load) ?(factor|margin)", "reducing safety margins"),
-    (r"(remove|demolish|cut out|knock out).{0,30}(load[- ]?bearing|beam|column|wall|support)", "removing structural elements"),
+    (r"\b(remov(e|ing)|demolish(ing)?|cut(ting)? out|knock(ing)? out) (the |a |an |this |that |our |my )?(existing )?(load[- ]?bearing |structural |rcc )?(wall|beam|column|support)s?\b", "removing structural elements"),
     (r"skip.{0,20}inspect", "skipping inspections"),
 ]
+_AFTER_IGNORE = r"\b(?!(-| )?(draft|revision|revised|design|values?|loads?|dimensions?|section|sketch|drawing|mention|calculation))"
 _INJECTION_PATTERNS = [
-    r"ignore (all |any |the )?(previous|prior|above|earlier)", r"disregard (all |any |the )?(previous|prior|above|earlier|instructions)",
-    r"system prompt", r"you are now", r"new instructions?", r"developer mode", r"jailbreak", r"act as (an? )?",
-    r"reveal .{0,20}(prompt|instructions|key)", r"override", r"do anything now", r"</?(system|assistant|instruction)",
-    r"(set|use|change) (the )?(fck|fy|load|cover)", r"mark (it|this|the design) as (safe|approved|passed)",
+    r"ignore (all |any |the |your )?(previous|prior|above|earlier)" + _AFTER_IGNORE,
+    r"disregard (all |any |the |your )?(previous|prior|above|earlier|instructions|rules|system)" + _AFTER_IGNORE,
+    r"forget (all |any |the |your )?(previous |prior |earlier )?(instructions|rules|guidelines)",
+    r"system prompt", r"you are now (a |an |in |the |my |free|unrestricted|dan\b)", r"new instructions?\s*[:\-]|(following|these) new instructions?",
+    r"developer mode", r"jailbreak", r"do anything now",
+    r"\bact as (an? |the )?(unrestricted|unfiltered|jailbroken|different|new|another|admin\w*|root|system|dan\b|developer|ai\b|assistant)",
+    r"\b(pretend|roleplay|role-play) (to be|that you|you are|as)\b",
+    r"reveal .{0,20}(prompt|instructions|key)",
+    r"\boverride\s*[:,\-]|\boverrid(e|ing)\b.{0,30}\b(instructions?|rules?|guard\w*|checks?|verif\w*|safety|limits?|polic\w*|restrictions?|factors?)\b",
+    r"</?(system|assistant|instruction)",
+    # changing a design value is normal in a brief; it is an injection only when it comes with an override cue
+    r"(ignore|disregard|regardless|instead|forget|without checking).{0,60}\b(set|use|change) (the )?(fck|fy|loads?|cover)\b",
+    r"\b(set|use|change) (the )?(fck|fy|loads?|cover)\b.{0,40}(regardless|whatever|anyway)",
+    r"mark (it|this|the design|this design|the beam) as (safe|approved|passed)",
+    r"\b(ai|assistant|model|llm)\b.{0,12}\b(must|should|shall|will)\b.{0,12}\b(state|say|report|declare|output|confirm)\b",
+    r"skip (the )?(verifier|verification|checks)",
 ]
 
 
 def screen_scope(text: str) -> tuple[list[str], list[str]]:
-    """Returns (out_of_scope_features, unsafe_requests) found in the *user's own* words."""
+    """Returns (out_of_scope_features, unsafe_requests) found in the *user's own* words. Negated mentions do not count."""
     low = text.lower()
-    oos = sorted({label for pat, label in _OOS_PATTERNS if re.search(pat, text, re.I)})
-    unsafe = sorted({label for pat, label in _UNSAFE_PATTERNS if re.search(pat, low)})
+    oos = sorted({label for pat, label in _OOS_PATTERNS if _hit(pat, text)})
+    unsafe = sorted({label for pat, label in _UNSAFE_PATTERNS if _hit(pat, low)})
     return oos, unsafe
 
 
