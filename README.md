@@ -1,10 +1,10 @@
 # SDC-V: Structural Design Copilot with Deterministic Verifier
 
-SDC-V is a web application and JSON API that produces a draft reinforced-concrete (RCC) beam design to IS 456:2000 from either a structured form or a plain-English brief. A large language model (Google Gemini) is used only to extract fields from the brief and to narrate the result. All engineering numbers are produced by a deterministic Python calculator, all pass/fail verdicts are produced by a clause-tagged rule registry, and any model-written narrative is rejected if it contains a number that is not present in the verified result.
+SDC-V is a web application and JSON API that produces a draft reinforced-concrete (RCC) beam design to IS 456:2000 from either a structured form or a plain-English brief. A language model (Google Gemini) is used only to extract fields from the brief and to write the explanation of the result. Every engineering number is produced by a deterministic Python calculator, every pass or fail verdict is produced by a registry of clause-tagged rules, and any model-written narrative is rejected if it contains a number that is not present in the verified result. Every run is stored in a SQLite audit log and stamped as a draft that requires review by a licensed structural engineer.
 
-Every output is a draft. The tool does not certify, approve or sign off a design.
+Version: 0.2.0 (`APP_VERSION` in `backend/app/config.py`). Code edition: IS456:2000.
 
-## Table of Contents
+# Table of Contents
 
 - Overview
 - Architecture
@@ -26,635 +26,761 @@ Every output is a draft. The tool does not certify, approve or sign off a design
 - Contributing
 - License
 
-## Overview
+# Overview
 
-### What problem it solves
+## What problem it solves
 
-Preliminary beam sizing and checking is repetitive and rule-based, but free-text briefs from clients and tender extracts are unstructured. Using a language model alone for the calculation is unreliable because it can produce plausible but wrong numbers. SDC-V separates the two concerns: the model handles language, and verified code handles every calculation and every compliance decision.
+Drafting a singly reinforced rectangular beam by hand involves many small calculations and checks (loads, moment, flexure, bar selection, shear, deflection, detailing) where a single wrong number is hard to spot. Using a language model to do this directly is unreliable because a model can state plausible but wrong numbers. SDC-V separates the two concerns. Code owns every number and every verdict. The model is confined to reading the brief and narrating a result that has already been verified, and its narrative is checked mechanically against that result.
 
-### Who it is for
+## Who it is for
 
-- Structural engineers who want a fast, auditable first draft of a simple beam design for review.
-- Developers and researchers evaluating guardrail patterns for LLM applications in a safety-relevant domain.
+- Structural engineers and students who want a fast, checked first draft of a beam section and reinforcement.
+- Developers and reviewers who want a reference for a guarded LLM pipeline in which the model never owns a number.
 
-### Core capabilities
+The tool does not replace engineering judgement. All output carries the stamp "DRAFT: requires review and sign-off by a licensed structural engineer. This output is not a certified design."
 
-- Natural-language intake: converts a brief (plus an optional pasted specification) into structured fields, and asks for missing values instead of guessing.
-- Structured-form intake that runs without any LLM or API key.
-- Input guardrails: scope screening, unsafe-request refusal, prompt-injection flagging, PII redaction before text leaves the machine, grounding of extracted numbers, unit normalisation, and range validation.
-- Deterministic flexure, shear, deflection and detailing design for singly reinforced rectangular beams.
-- A registry of 19 verifier rules, each carrying an IS 456 clause reference, including two cross-checks that independently recompute design moment and effective depth.
-- A deterministic reviser that enlarges the section (depth in 25 mm steps, then width, at most 8 revisions) until all error-level checks pass or the limit is reached.
-- A report narrative written by the model but validated by a number-trace guardrail, with a deterministic template fallback.
-- A generated SVG cross-section sketch.
-- A SQLite audit log of every run (redacted text only), with filtering, statistics, CSV export and an engineer review-logging endpoint.
-- Markdown report export for any logged run.
-- A what-if explorer that scans nearby sections through the same calculator and rules, and reports the lightest passing one.
-- A live status check that makes a real model call and flags configured models the API no longer offers.
-- Optional bearer-token protection, per-client rate limiting, security headers and request logging.
-- A searchable structural engineering knowledge base (105 reference entries in 19 topics) and an expert-system view of the calculator: its facts (read live from the code tables), derivation, verifier and guardrail rules, meta-rules, a module flow diagram, cognitive-architecture mapping and interface.
-- A benchmark of 60 cases covering golden, revision, incomplete, invalid, out-of-scope and prompt-injection categories.
+## Core capabilities
 
-### System boundaries
+- Design of singly reinforced rectangular beams, simply supported or cantilever, under a uniformly distributed load, using the limit state method of IS 456:2000: loads, bending moment and shear, flexure, tension bar selection, shear reinforcement, deflection control and detailing.
+- Two input paths: a structured form (`POST /api/design`) and a natural-language chat with optional images and a pasted attachment (`POST /api/chat`).
+- 19 clause-tagged verifier rules, including two independent cross-checks of the calculator, and a deterministic reviser that enlarges the section (depth first, then width, in 25 mm steps) when a revisable rule fails.
+- A what-if explorer that scans 51 nearby sections through the same calculator and rules, with no model call and no audit write.
+- A number-trace output guardrail: every number in a model-written narrative must appear in the verified result, with up to three attempts and then a deterministic template.
+- An audit log of every design run (SQLite), with filtering, statistics, CSV export, Markdown report export and a reviewer log entry.
+- A reference knowledge base of 105 entries in 19 topics, and an expert-system view generated from the running code (facts, rules, meta-rules, module flow, endpoints).
+- A browser interface with eight views, light and dark themes, a command palette and a chart viewer.
+- A benchmark with pre-flight checks and metrics for the regex guards, and a 60-case end-to-end benchmark.
 
-Supported design scope:
+## System boundaries
 
-- Singly reinforced rectangular beams
-- Simply supported or cantilever
-- Uniformly distributed load only
-- IS 456:2000, limit state method
-- Concrete grades M20, M25, M30, M35, M40; steel grades Fe250, Fe415, Fe500
+In scope (enforced by `BeamInput` in `backend/app/schemas.py`):
 
-Not supported (detected and declined): T and L beams, doubly reinforced beams, continuous beams, slabs, columns, footings, prestressed concrete, point loads, seismic detailing (IS 13920), steel design, and other design codes.
+- Span 0 to 15 m (cantilever length up to 6 m); width b 150 to 1000 mm; overall depth D 200 to 2000 mm, with D/b at most 4; nominal cover 20 to 100 mm and at least 100 mm less than D.
+- Concrete grades M20, M25, M30, M35, M40; steel grades Fe250, Fe415, Fe500.
+- Exposure: mild, moderate, severe, very severe, extreme.
+- Dead load (excluding self-weight) and live load, each 0 to 500 kN/m, not both zero.
 
-Practical input limits (from `backend/app/schemas.py`): span up to 15 m (cantilever up to 6 m), width 150 to 1000 mm, depth 200 to 2000 mm, cover 20 to 100 mm, D/b not greater than 4, each of dead and live load up to 500 kN/m.
+Detected and declined (out of scope): T and L beams and flanged sections, doubly reinforced beams, continuous beams, slabs, columns, footings and foundations, prestressed concrete, design codes other than IS 456:2000, seismic and ductile detailing (IS 13920), steel design (IS 800), walls, retaining structures and deep beams, and point loads.
 
-## Architecture
+Refused as unsafe requests: approving or certifying a design, reducing safety margins, removing structural elements, skipping inspections.
 
-### High-level system architecture
+Not provided: user accounts, roles, multi-tenant isolation, Docker or CI configuration, a license file.
 
-The system is a single FastAPI process that serves both a JSON API and a static single-page frontend. There is no separate database server or message queue. The only external service is the Gemini REST API, called from the backend over HTTPS.
+# Architecture
 
-Textual diagram of the natural-language path:
+## High-level system architecture
 
-1. Browser posts messages to `POST /api/chat`.
-2. Deterministic scope screen on the user's own words. Out-of-scope or unsafe requests return immediately without calling the model.
-3. Injection patterns are checked and logged; PII (emails, phone numbers) is redacted.
-4. Intake LLM call extracts fields as JSON.
-5. Grounding check drops any extracted number that does not literally appear in the user's text or attachment.
-6. Normalisation converts units and validates ranges. Missing fields produce a follow-up question.
-7. Calculator, rule registry and reviser loop produce a verified design.
-8. Writer LLM call narrates the verified result; the number-trace guardrail accepts or rejects it, with up to 3 attempts and then a template fallback.
-9. The full run is written to the SQLite audit log and returned to the browser.
+The system has four layers.
 
-The structured path (`POST /api/design`) skips steps 2 to 5 and the intake call, and uses the writer only when an LLM is configured.
+1. Browser interface: static HTML, CSS and native ES modules in `frontend/`, with no build step and no third-party runtime dependency.
+2. Optional Node proxy: `frontend/server.mjs` serves the static files and forwards `/api/*` to the backend. The backend can also serve the interface itself.
+3. FastAPI backend: `backend/app/`, a JSON API plus a static file server, with a request middleware for token check, rate limit, security headers and request log.
+4. Persistence and external services: a SQLite audit log in `backend/data/audit.db`, and the Google Gemini REST API (the only external service).
 
-### Backend architecture
+Request path for a chat design: browser, optional Node proxy, FastAPI route, `Pipeline.run_chat`, then in order: scope screen, injection flags, PII redaction, Gemini intake, number grounding, unit normalisation and range validation, calculator, verifier, reviser loop, report data, Gemini narrative with number trace (or template), server-side section sketch, audit write, JSON response.
 
-- `app/main.py` defines the FastAPI application, request models, routes and the request middleware (optional token check, rate limit, security headers, request log), and instantiates a single `AuditLog`, `GeminiClient` and `Pipeline` at import time.
-- `app/security.py`, `app/explore.py`, `app/export.py` and `app/scope.py` hold the request controls, the what-if scan, the report and CSV export, and the scope description.
-- `app/pipeline.py` orchestrates the stages and defines `RunResult`, the single response model for every outcome.
-- `app/llm/` holds the model client and the two prompt-driven agents (intake and writer).
-- `app/guardrails/` holds the input guardrails and the output number-trace guardrail.
-- `app/is456/` holds the calculator and the code tables. Both are pure Python with no I/O.
-- `app/verifier.py` holds the rule registry. Rules recompute key quantities from raw input with their own formulas so that a fault in the calculator surfaces as a failed cross-check.
-- `app/reviser.py`, `app/report.py`, `app/sketch.py`, `app/audit.py`, `app/schemas.py`, `app/config.py` hold the remaining supporting logic.
+## Backend architecture
 
-### Frontend architecture
+- `main.py` builds the FastAPI app and instantiates one `AuditLog`, one `GeminiClient`, one `Pipeline` and one `RateLimiter` at import time. Each request that needs the pipeline calls `pipeline.with_model(model)`, which returns a new `Pipeline` bound to a per-request `GeminiClient` that tries the selected model first and then the other configured models.
+- `pipeline.py` is the orchestrator. It owns the status vocabulary (`designed`, `needs_engineer`, `needs_info`, `rejected`, `out_of_scope`, `refused`, `error`), the calculator, verifier and reviser loop (`design_with_verification`), the `RunResult` response model and the per-stage trace.
+- `guardrails/input.py` holds input handling: the `RawIntake` model, unit normalisation, range validation, scope and unsafe-request screening, injection pattern flags, PII redaction and number extraction for grounding.
+- `guardrails/output.py` holds the number-trace check.
+- `is456/` holds the calculator and the code tables. Both are pure Python with no I/O.
+- `verifier.py` holds the rule registry. Each rule recomputes key quantities from the raw input with its own formulas, so a fault in the calculator is caught as a cross-check failure.
+- `llm/` holds the Gemini client, the intake agent and the report writer.
+- `audit.py`, `export.py`, `explore.py`, `scope.py`, `kb.py`, `system_model.py`, `report.py`, `sketch.py`, `reviser.py`, `schemas.py`, `security.py`, `config.py` hold the remaining logic (see Project Structure).
 
-A dependency-free static page (`frontend/index.html` plus native ES modules and CSS) served by FastAPI at `/` with assets under `/static`, or by the Node server in `frontend/server.mjs`. The look is an "engineering instrument": a left sidebar, a status bar, light and dark themes (System, Light, Dark), and a two-colour convention that marks what the deterministic code produced (cyan or blue) against what the language model produced (violet). Pass, warning and fail colours are used for verdicts only. Ctrl/Cmd+K opens a command palette. Eight views, addressable by URL hash:
+## Frontend architecture
 
-- Home: an example run animated from real calculator output (it calls `/api/explore`, which is not audited), what the tool can do, and cards for the viewable database (knowledge base, facts, rules, meta-rules, endpoints, audit runs).
-- Assistant: chat with optional images and a pasted attachment; the answer is a compact card that opens the full report in Form design.
-- Form design: structured-form input without any model, and the full result view (verdict, section sketch, design values, verifier check table, revision timeline, narrative, guardrail events) with report download, JSON download, print, copy narrative and review logging.
-- Explore sections: what-if scan of nearby sections with a button to carry a passing section back into the design form.
-- Knowledge base: keyword search and topic filter over `/api/kb`; entries marked "in calculator" are implemented by the tool.
-- Expert system: Flow (swimlane diagram of the modules with a trace animation), Facts, Rules (derivation, the verifier registry with a filter, guardrail), Meta-rules, Cognitive system and Interface, all from `/api/system`.
-- History: searchable, filterable, paginated audit log with summary statistics, CSV export and one-click reopening of any run.
-- Scope and status: supported scope and limits (read from the backend), fixed assumptions, versions, and a live model check.
+- Vanilla JavaScript as native ES modules loaded from `frontend/app.js` (`<script type="module">`). There is no bundler, transpiler or package dependency.
+- `chrome.js` owns the shell (header, sidebar, router, status bar, command palette, theme). Each view is one module that registers itself with the router. `result.js` renders a design result (verdict dashboard, checks, trace) for Form design, History and the Assistant.
+- `theme.css` is the only place colours are defined. The interface colours deterministic output (calculator, verifier, reviser, audit) differently from language-model output (intake, narrative) and reserves green, amber and red for verdicts.
+- Beam drawings (`beam.js`) are inline SVG rendered from numbers returned by the API. No engineering value is computed in the browser.
+- Content Security Policy is `script-src 'self'`, so there are no inline scripts. The theme is applied before first paint by an external script (`theme-init.js`).
 
-The demo animation is paused or static under `prefers-reduced-motion`. A token dialog appears only when the backend requires a token. Server-supplied strings are HTML-escaped in the client; the SVG sketch is generated by the server from numeric values and inserted as markup.
+## Data layer
 
-### Data layer
+One SQLite file (`backend/data/audit.db`, created on first start) with one table, `runs`. See Database Schema. There is no ORM; `audit.py` uses the standard `sqlite3` module with one connection per call and a lock around writes.
 
-One SQLite file, `backend/data/audit.db`, created on first start. Each run is stored as a JSON record in a single `runs` table.
+## Integration points
 
-### Integration points and external services
+- Gemini REST API: `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` for intake, narrative and the live check; `GET .../v1beta/models?pageSize=200` to list models during the live check. Authentication is the `x-goog-api-key` header.
+- Browser to backend: same-origin JSON over HTTP, through the Node proxy or served directly by FastAPI.
 
-- Gemini `generateContent` REST endpoint (`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`), authenticated with the `x-goog-api-key` header, called through `httpx`.
-- No other external services.
+## External services used
 
-### Design patterns used
+- Google Gemini API (model calls). Text sent to it is redacted for email addresses and phone numbers first. Images attached to a chat are sent to it as inline data.
+- No other external service. No telemetry, analytics or error-tracking service is configured.
 
-- Pipeline / orchestrator (`Pipeline`).
-- Protocol-based dependency injection for the model (`LLM` protocol), which allows a scripted `FakeLLM` in tests and a `None` model for structured mode.
-- Decorator-based registry for verifier rules (`@rule`).
-- Fail-closed fallback: rejected or unavailable model output is replaced by a deterministic template.
-- Model-as-extractor: the model proposes, deterministic code validates (grounding, normalisation, range checks).
-- Model fallback chain with retry (`GeminiClient`).
+## Design patterns used
 
-## Project Structure
+- Pipeline with explicit stages and a status vocabulary.
+- Rule registry: rules are plain functions registered with a decorator (`@rule`), which gives a single source for the verifier, the rule list API and the rules fingerprint.
+- Protocol-based model client: `LLM.generate(system, user, json_mode, images)` is the only contract the pipeline needs, which is how tests substitute a scripted fake.
+- Fail closed: if the model is unavailable, unparseable or untraceable, the result is an explicit error status or a deterministic template, never a guessed value.
+- Allowlists over blocklists for static files and model identifiers.
+- Per-request object graph: `with_model` creates a fresh `Pipeline` and `GeminiClient`, so per-request state (trace, attempts, last model) is not shared between requests.
+- Single source of truth for scope: `scope.py` reads limits from the `BeamInput` schema and labels from the guard patterns, so the scope view cannot drift from validation.
 
-### Root Directory
+## Diagrams explained in text
+
+Design flow, left to right:
+
+- Input: form values or a chat brief (with optional attachment and images).
+- Guardrails: scope screen, injection flags, PII redaction, grounding, unit and range validation.
+- Calculator: produces a `Design` (all numbers).
+- Verifier: runs 19 rules over the input and design.
+- Reviser: if an error-level rule that resizing can fix fails, enlarge the section by 25 mm and loop back to the calculator, up to 8 times. If a failing rule cannot be fixed by resizing, stop with status `needs_engineer`.
+- Report data: pre-formatted strings from the verified result.
+- Narrative: Gemini writes text from the report data; the number trace compares every number to the report data; after three rejected attempts a template is used.
+- Audit: the full `RunResult` is stored with the code edition and rules fingerprint.
+
+Module trust boundary: the model sits at two points only (intake and narrative). Between them everything is code. The audit write and the final response contain only values that came from code.
+
+# Project Structure
+
+## Root Directory
 
 - `README.md` — This document.
-- `.gitignore` — Excludes secrets (`.env`, `.env.*` except `.env.example`), local databases (`*.db`), Python caches, tooling state directories, and benchmark result outputs.
-- `.env` — Local, untracked environment file. The configuration loader also reads this file (see Configuration).
-- `SDC-V_v2.docx` — Technical report on the verified state, live deployment and improvement plan. It was written before the v0.2.0 changes described here and has not been regenerated.
-- `SDC-V.docx`, `SDC-V.pdf`, `Structural_Design_Copilot.docx` — Project report documents. The pipeline description in this repository follows section 2.7 of the report, according to the previous README.
+- `.gitignore` — Excludes secrets (`.env`, `.env.*` except `.env.example`), local databases (`*.db`, `*.sqlite3`), Python caches and virtual environments, tooling state directories (`.claude/`, `.claude-flow/`, `.swarm/`, `.agents/`, `.codex/`), logs, benchmark outputs (`benchmark/results/`, `benchmark/*_results.*`) and the local notes file `LLM_addition.md`.
+- `.env` — Optional, untracked. A repository-root environment file read by `config.py` after `backend/.env`.
+- `SDC-V.docx`, `SDC-V.pdf`, `SDC-V_v2.docx`, `Structural_Design_Copilot.docx` — Project report documents. They are not used at runtime. The v2 report predates the current frontend and the guard benchmark.
+- `LLM_addition.md` — Untracked local planning notes (ignored by git). Not part of the product.
+- `.claude-flow/` — Untracked tooling state. Not part of the product.
 
-### /backend
+## /backend
 
-- `requirements.txt` — Python dependencies: fastapi, uvicorn, pydantic, httpx, pytest (lower bounds only, no pinned versions).
-- `.env.example` — Template for backend environment variables.
-- `data/audit.db` — SQLite audit database, created at runtime. Untracked.
+- `requirements.txt` — Python dependencies with lower bounds only: `fastapi>=0.110`, `uvicorn>=0.29`, `pydantic>=2.6`, `httpx>=0.27`, `pytest>=8.0`. There is no lock file.
+- `.env.example` — Tracked template for `backend/.env`.
+- `data/audit.db` — The SQLite audit log, created on first start. Untracked.
 
-### /backend/app
+## /backend/app
 
 - `__init__.py` — Package marker.
-- `main.py` — FastAPI app, routes, request models, middleware (token check, rate limit, security headers, request log), static asset whitelist.
-- `security.py` — Client-IP resolution, `RateLimiter` (sliding window), constant-time token check, security header set.
-- `explore.py` — What-if scan of nearby sections using the calculator and rules.
-- `export.py` — Markdown report for a stored run and CSV export of run lists (with formula-injection protection).
-- `scope.py` — Builds the scope description; limits are read from the `BeamInput` schema.
-- `config.py` — Environment loading (`.env` parsing), Gemini key and model list accessors, and constants: `APP_VERSION = "0.2.0"`, `MAX_REVISER_ITERATIONS = 8`, `MAX_WRITER_ATTEMPTS = 3`.
-- `pipeline.py` — `Pipeline` class with `run_structured` and `run_chat`; `design_with_verification` loop; `RunResult` and `Iteration` models; `tool_versions()`.
-- `schemas.py` — Pydantic models `BeamInput` (validated, unit-normalised input), `CheckResult`, `BarArrangement`, `Design`.
-- `verifier.py` — 19 registered rules, `run_rules`, `RULE_META`, and `rules_fingerprint()` (a short SHA-256 over rule IDs and clauses, recorded in the audit log).
-- `reviser.py` — Increases depth by 25 mm while D is within 3 times b and 2000 mm, otherwise increases width by 25 mm up to 1000 mm.
-- `report.py` — Builds `ReportData` (pre-formatted strings), the draft `STAMP`, and the deterministic `template_narrative`.
-- `sketch.py` — Generates the SVG cross-section from `BeamInput` and `Design`.
-- `kb.py` — Curated knowledge base entries and topics (`kb_payload`). Reference material only; entries carry an `implemented` flag.
-- `system_model.py` — Facts (read from `is456/tables.py` and the schema), derivation, verifier and guardrail rules, meta-rules, module graph, cognitive map and endpoint list (`system_payload`).
-- `audit.py` — `AuditLog` over SQLite: save, filtered search with total, get, review, statistics; indexes on `created_at` and `status`.
+- `main.py` — FastAPI application, request and response models for the API, the request middleware, all routes, and the static file routes (`/` and `/static/{name}`). Configures logging.
+- `config.py` — Loads `.env` files, defines the model list, timeouts, rate limit, API token accessor, data directory and the reviser and writer limits.
+- `pipeline.py` — Orchestration. Defines `RunResult`, `TraceStep`, `LLMAttempt`, the `Pipeline` class (`run_structured`, `run_chat`, `with_model`), the verification loop `design_with_verification` and `tool_versions`.
+- `schemas.py` — Pydantic models shared across the pipeline: `BeamInput` (validated, unit-normalised input and the supported limits), `CheckResult`, `BarArrangement`, `Design` (every calculator output; includes the presentation constant `eps_cu`).
+- `verifier.py` — The rule registry: 19 rules registered with `@rule`, `RULE_META`, `run_rules` and `rules_fingerprint` (a 12-character SHA-256 prefix over rule IDs and clauses).
+- `reviser.py` — Deterministic section reviser: depth in 25 mm steps while D is at most 3b and 2000 mm, then width up to 1000 mm.
+- `report.py` — `ReportData` (pre-formatted strings), the draft `STAMP`, `build_report_data`, the deterministic `template_narrative` and `bar_text`.
+- `sketch.py` — Server-side SVG cross-section (`section_svg`) included in the response for reports and exports. The browser UI draws its own SVG from numbers.
+- `explore.py` — The what-if explorer. No model, no audit write.
+- `export.py` — Markdown report for a stored run, and CSV export of run lists with spreadsheet formula-injection protection.
+- `scope.py` — Builds the supported-scope description from the `BeamInput` schema, the guard pattern labels, fixed assumptions and reviser settings.
+- `security.py` — Client IP resolution, the sliding-window `RateLimiter`, constant-time token comparison, and the security header set.
+- `audit.py` — The SQLite audit log: save, search, get, review, stats and a health ping.
+- `kb.py` — The reference knowledge base: 105 entries in 19 topics, served by `GET /api/kb`. Entries carry an `implemented` flag (shown as "in calculator" in the UI).
+- `system_model.py` — Describes the system as a knowledge-based system (facts, derivation rules, verifier rules, guardrail rules, meta-rules, modules, edges, cognitive mapping, endpoints). Facts and verifier rules are read from live code. Served by `GET /api/system`.
 
-### /backend/app/llm
+## /backend/app/guardrails
 
-- `gemini.py` — `GeminiClient` (REST client with ordered model fallback, up to two attempts per model, retry on 429/500/503, no retry on timeout, temperature 0, 8192 max output tokens, per-request timeout and total time budget, per-model error report, `probe()` and `remote_models()` for diagnostics), the `LLM` protocol, `LLMError`, `parse_json`.
-- `intake.py` — Intake system prompt, `IntakeResult`, `run_intake` (JSON mode, two parse attempts).
-- `writer.py` — Writer system prompt and `write_report` (up to 3 attempts with number-trace validation, then template fallback).
+- `__init__.py` — Package marker.
+- `input.py` — `Quantity` and `RawIntake`; unit conversion tables; `normalise` (units, ranges, grade parsing, support and exposure aliases; returns beam, missing fields, errors, out-of-scope notes and conversions); `screen_scope` (out-of-scope and unsafe-request patterns, negation-aware); `detect_injection` (logging-only pattern flags); `redact` (email and phone); `numbers_in` (for grounding).
+- `output.py` — `trace_numbers`: returns the numbers in a narrative that do not occur in the strings of the report data.
 
-### /backend/app/guardrails
+## /backend/app/is456
 
-- `input.py` — `RawIntake` and `Quantity` models, unit conversion tables (length to mm; load to kN/m), grade and exposure normalisation, `normalise`, scope and unsafe regex screens, injection patterns, PII redaction (email and phone), `numbers_in` for grounding.
-- `output.py` — `trace_numbers`: every number in a narrative must occur in the strings of the verified `ReportData`.
+- `__init__.py` — Package marker.
+- `calculator.py` — `design_beam`: loads, moment and shear, effective depth, flexure (Annex G), bar selection, shear reinforcement and stirrup spacing, deflection control, detailing. Pure Python, no I/O.
+- `tables.py` — IS 456:2000 constants and tables with clause references: code edition, unit weight, load factor, stirrup assumptions, bar diameters, aggregate size, limiting neutral-axis ratios, minimum cover and grade by exposure, maximum shear stress by grade, maximum bar spacing by steel grade, and `EPS_CU` (0.0035, used only for presentation).
 
-### /backend/app/is456
+## /backend/app/llm
 
-- `calculator.py` — `design_beam`: loads, flexure with bar-arrangement iteration, shear, deflection, detailing, assumptions list.
-- `tables.py` — IS 456 constants and tables: limiting neutral-axis ratios, cover and grade by exposure, tau_c,max, maximum bar spacing, basic span/depth ratios, `tau_c` closed-form fit of Table 19, and `deflection_modification` analytic fit of Fig. 4.
+- `__init__.py` — Package marker.
+- `gemini.py` — `GeminiClient`: REST client with ordered model fallback, up to two attempts per model, retry on HTTP 429, 500 and 503 and on network errors, no retry after a timeout, temperature 0, 8192 output tokens, a per-call timeout and a total time budget, a bounded list of per-call attempts, a live `probe`, and `remote_models`. Also `LLM` (protocol), `LLMError` and `parse_json`.
+- `intake.py` — The intake agent: a system prompt and `run_intake`, which asks the model for JSON (intent, fields, image transcription), validates it, and retries once on parse failure.
+- `writer.py` — The writer system prompt and `write_report`: up to three attempts, each checked by the number trace and for the draft stamp, then the template fallback.
 
-### /backend/tests
+## /backend/tests
 
-- `conftest.py` — Path setup, `base_input` fixture, scripted `FakeLLM`.
-- `test_calculator_golden.py` — Calculator against coefficients, Table 19, round trips and hand calculations (9 tests).
-- `test_verifier_mutation.py` — Verifies that injected calculator faults are caught by the rules (8 tests).
-- `test_guardrails.py` — Input and output guardrail tests (12 tests).
-- `test_pipeline_api.py` — Pipeline flows with a fake model, image intake and grounding, and API endpoint tests (12 tests).
-- `test_v2_features.py` — Gemini client fallback, timeout and budget behaviour (mocked HTTP), audit redaction, filters and statistics, CSV safety, report export, scope, explorer, token auth, rate limiting, security headers, static whitelist, deep health (17 tests).
+- `__init__.py`, `conftest.py` — Test package; shared `base_input` fixture and a scripted `FakeLLM`.
+- `test_calculator_golden.py` — 25 tests: calculator against IS 456 table values and SP 16-style closed forms, with a 2% tolerance.
+- `test_verifier_mutation.py` — 14 tests: faults injected into the calculator output must be flagged by the verifier.
+- `test_guardrails.py` — 23 tests: normalisation, units, ranges, scope screen, unsafe requests, injection flags, redaction.
+- `test_knowledge_system.py` — 10 tests: knowledge base and expert-system payloads.
+- `test_pipeline_api.py` — 12 tests: pipeline statuses and API routes with a scripted model.
+- `test_v2_features.py` — 17 tests: model fallback and timeout behaviour (mocked HTTP), audit redaction, filters and statistics, CSV safety, report export, scope, explorer, token auth, rate limiting, security headers, static allowlist, deep health.
+- `test_guard_cases.py` — 218 parametrised tests: every labelled case in `benchmark/guard_cases.jsonl` and the guard-relevant cases in `benchmark/cases.jsonl`, plus negation and unsafe-wording regression tests.
+- `test_benchmark_metrics.py` — 13 tests: the benchmark metrics and the pre-flight checks.
 
-- `test_knowledge_system.py` — Knowledge base structure, expert-system counts against the code, facts read from live tables, graph consistency and route documentation (6 tests).
+## /benchmark
 
-The suite reports 97 test results because some tests are parametrised.
+- `cases.jsonl` — 60 end-to-end cases: golden (20), needs_revision (8), incomplete (10), invalid (8), out_of_scope (6), injection (8).
+- `generate_cases.py` — Regenerates `cases.jsonl`.
+- `run_benchmark.py` — Runs the pre-flight checks, the end-to-end cases and the guard metrics. Options: `--llm`, `--baseline`, `--guards-only`, `--no-checks`.
+- `guard_cases.jsonl` — Labelled texts for the regex guards, including benign briefs that contain trigger words. Entries marked `known_gap` are attacks the regexes are not expected to catch.
+- `generate_guard_cases.py` — Regenerates `guard_cases.jsonl`.
+- `guard_eval.py` — Runs `screen_scope` and `detect_injection` over the labelled cases.
+- `metrics.py` — Confusion matrix, safety and usability rates, false allows and false blocks, MCC, seeded bootstrap intervals, trivial baselines.
+- `checks.py` — Pre-flight checks: label leakage into model-visible text, empty or oversized inputs, duplicate cases, missing fields, one-sided case sets.
 
-### /frontend
+## /frontend
 
-- `index.html` — Page structure: header with model status pill, eight navigation tabs (Home, Assistant, Form design, Explore sections, Knowledge base, Expert system, History, Scope and status), chat and form input, result container, token dialog.
-- `app.js` — Entry point; imports the modules below. All modules are flat files because `/static/{name}` is single-segment.
-- `core.js` (DOM helpers, API client, shared state), `fmt.js` (engineering notation, friendly model errors, count-up), `ui.js` (panel, pills, origin tags, tiles, data table, states, check cells, utilisation bars, title block, tooltips), `beam.js` (SVG drawings from returned values only), `chrome.js` (theme, sidebar, router, status bar, command palette), `result.js` (verdict dashboard, checks, trace waterfall, fallback chain), and one module per view: `home.js`, `chat.js`, `design.js`, `explore.js`, `kb.js`, `system.js`, `history.js`, `scope.js`.
-- `viewer.js` — Chart viewer. Every beam drawing and knowledge-base chart has an Enlarge button (or click the chart) that opens it large on the page, with zoom (toolbar, + / - / 0, Ctrl+wheel, double-click), drag to pan, and SVG or PNG download. Esc closes it.
-- `fixture.js` — Precomputed example for the Home page, generated once from the real calculator and verifier. Nothing is run or logged when Home plays it.
-- `theme.css` — The only place colours are defined (design tokens); `theme-init.js` applies the saved theme before first paint (an external script, because of the CSP).
-- `styles.css` — Components and layout; print uses plain black-on-white.
-- `kbcharts.js` — Charts for the knowledge base.
-- `package.json` — npm manifest. `npm start` runs `node server.mjs`. No third-party dependencies.
-- `server.mjs` — Node HTTP server. Serves `index.html` and the explicitly listed asset files (a fixed allowlist, which blocks path traversal) and proxies `/api/*` to `BACKEND_URL`, overwriting `X-Forwarded-For` with the real client address and adding security headers to the pages it serves.
+- `index.html` — Page shell: header, sidebar container, eight view containers, status bar, token dialog, command palette dialog.
+- `package.json` — npm manifest. `npm start` runs `node server.mjs`. No dependencies. Requires Node 18 or later.
+- `server.mjs` — Node HTTP server: serves `index.html` and an explicit allowlist of assets, proxies `/api/*` to `BACKEND_URL` (overwriting `X-Forwarded-For`), and adds security headers to the pages it serves.
+- `app.js` — Entry point; imports every module, installs tooltips, the chrome and the chart viewer, and shows the view named by the URL hash.
+- `core.js` — DOM helpers, HTML escaping, storage wrappers, the API client (token header, 401 retry, error mapping), shared state and an event bus.
+- `fmt.js` — Presentation formatting: engineering notation (N/mm², kN/m³, ×, arrows, minus sign), verdict labels, a parser that turns stored raw model errors into short readable text, count-up animation.
+- `ui.js` — Shared components: icons, panel, pills, origin tags, stat tiles, data table (sticky header, sorting, expandable rows), skeleton, empty and error states, rule check cells, utilisation bars, title block, console view, tooltips.
+- `beam.js` — Inline SVG drawings from returned numbers: cross-section, elevation, shear force and bending moment, strain diagram, and the input-only preview.
+- `chrome.js` — Theme control, sidebar (collapse, drawer), router, health loading and model selector, status bar, command palette.
+- `result.js` — Rendering of a design result: verdict dashboard, rule grid, utilisation, attention list, design values, drawings, revision list, narrative, trace waterfall, model attempt chain, actions, review form.
+- `home.js`, `chat.js`, `design.js`, `explore.js`, `kb.js`, `system.js`, `history.js`, `scope.js` — One module per view.
+- `viewer.js` — Chart viewer: any beam drawing or knowledge-base chart opens large with zoom, pan and SVG or PNG download.
+- `fixture.js` — A precomputed example for the Home page, generated once from the real calculator and verifier. Nothing is run or logged when Home plays it.
+- `kbcharts.js` — Charts for knowledge-base entries (classic script exposing `window.kbChart`).
+- `theme.css` — Design tokens (colours, radii, spacing) for light and dark themes.
+- `theme-init.js` — Applies the saved or system theme before first paint.
+- `styles.css` — Components and layout; print stylesheet.
 
-### /benchmark
+# Installation
 
-- `generate_cases.py` — Generates `cases.jsonl` (60 cases: 20 golden, 8 needs-revision, 10 incomplete, 8 invalid, 6 out-of-scope, 8 injection).
-- `cases.jsonl` — The generated cases.
-- `run_benchmark.py` — Runs cases against the pipeline. Flags: `--llm` to include chat cases through Gemini, `--baseline` to compare a plain, tool-less model on required steel area for golden cases.
+## System requirements
 
-## Installation
+- Linux, macOS or Windows.
+- Python 3.10 or later (the code uses PEP 604 union syntax such as `X | None`). The project was developed and tested on Python 3.14 with pydantic 2.13.
+- Node.js 18 or later, only if you run the frontend through `npm start`. The backend serves the same interface on its own.
+- A Gemini API key, only for natural-language intake and model-written narratives. The structured form, the explorer and template reports work without one.
 
-### System requirements
+## Package manager requirements
 
-- Linux, macOS or Windows with Python 3.10 or later (the code uses `X | None` annotations and `from __future__ import annotations`).
-- Network access to `generativelanguage.googleapis.com` for natural-language mode and LLM-written narratives.
-- A Gemini API key for those two features. The structured form, the explorer and template reports work without one.
-- Node.js 18 or later, only if you run the frontend with `npm start`. The backend can serve the page on its own without Node.
+- `pip` for the backend. Dependencies are listed in `backend/requirements.txt` with lower bounds and no lock file.
+- `npm` (or plain `node`) for the frontend. There are no frontend packages to install.
 
-### Steps
+## Step-by-step setup
 
-```bash
+Create a virtual environment and install the backend dependencies:
+
+```
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
 ```
 
-Edit `.env` and set `GEMINI_API_KEY`. A key can be created at https://aistudio.google.com/apikey.
+Optionally create a `.env` file (see Configuration). Without a key the application still starts; chat requests then return status `error` and the form path returns template narratives.
 
-No database setup is required; the SQLite file and its directory are created on first start.
+No database setup is needed. The SQLite file and its table are created on first start.
 
-## Configuration
+# Configuration
 
-### Environment variables
+## Environment variables
 
-- `GEMINI_API_KEY` — Gemini API key. Default: empty (natural-language intake disabled, template reports only).
-- The model is not configured in the environment. It is chosen in the web UI (header selector, remembered in the browser) or with the `model` query parameter on `POST /api/chat` and `POST /api/design`. A `GEMINI_MODELS` line in a `.env` file is ignored.
-- `LLM_TIMEOUT_S` — Timeout for one Gemini request. Default: `25`. A model that times out is skipped, not retried.
-- `LLM_BUDGET_S` — Total time allowed for one `generate()` call across all models and retries. Default: `60`.
-- `SDCV_API_TOKEN` — If set, every `/api/*` route except `/api/health` requires `Authorization: Bearer <token>` or `X-API-Key: <token>`. Default: unset (open).
-- `RATE_LIMIT_PER_MIN` — Requests per minute per client for `POST /api/chat`, `/api/design` and `/api/explore`. `0` disables. Default: `30`.
+Read by the backend (`backend/app/config.py`):
 
-### Model options
+- `GEMINI_API_KEY` — Gemini API key. Default: empty, which disables natural-language intake and model-written narratives.
+- `LLM_TIMEOUT_S` — Timeout for one Gemini call, in seconds. Default: 25.
+- `LLM_BUDGET_S` — Total wall-clock budget for one `generate()` call across all models and retries, in seconds. Default: 60.
+- `SDCV_API_TOKEN` — If set, every `/api/*` route except `/api/health` requires this token. Default: unset (no authentication).
+- `RATE_LIMIT_PER_MIN` — Requests per minute per client and per route for `POST /api/chat`, `/api/design` and `/api/explore`. Default: 30. A value of 0 disables the limit.
+- `SDCV_DATA_DIR` — Directory for `audit.db`. Default: `backend/data`. Used to point tests or experiments at a throwaway database.
 
-Five models are offered in the web UI, defined in `MODEL_OPTIONS` in `backend/app/config.py` and checked against the live API (plain and JSON-mode calls) on 11 Nov 2026. The first is the default. If the selected model fails, times out or is out of quota, the other four are tried in the listed order.
+Read by the Node server (`frontend/server.mjs`):
 
-- `gemini-3.5-flash-lite` — fastest, default.
-- `gemini-3.1-flash-lite` — fast and stable.
-- `gemini-3-flash-preview` — fast, preview release.
-- `gemini-3.5-flash` — balanced speed and quality.
-- `gemini-3.6-flash` — newest working Flash, slower.
+- `PORT` — Listening port. Default: 3000.
+- `HOST` — Listening address. Default: 127.0.0.1.
+- `BACKEND_URL` — Backend origin to proxy `/api/*` to. Default: `http://127.0.0.1:8000`.
 
-Measured full chat design on 11 Nov 2026: 7.8 to 10 s on the two Flash-Lite models, 17 s on the 3 Flash preview, 22 s on 3.6 Flash. One 3.5 Flash call timed out and fell back to Flash-Lite (32 s), though repeat calls answered in 2 to 3 s, so latency varies. `gemini-3.8-flash`, `gemini-3.7-flash` and `gemini-flash-latest` timed out at 30 s and are not offered.
+## Configuration files
 
-### Constants in code
+- `backend/.env` and the repository-root `.env`: simple `KEY=value` lines; blank lines and lines starting with `#` are ignored; surrounding quotes are stripped. `backend/.env` is read first, then the root `.env`.
+- `backend/.env.example` is the tracked template.
 
-In `backend/app/config.py`: `MAX_REVISER_ITERATIONS = 8`, `MAX_WRITER_ATTEMPTS = 3`. The client timeout and budget come from `LLM_TIMEOUT_S` and `LLM_BUDGET_S`.
+## Precedence and overriding
 
-### Loading order
+Values are applied with "set if not already set". A real environment variable wins over `backend/.env`, which wins over the root `.env`. An environment variable that is set but empty still counts as set, so `GEMINI_API_KEY=` on the command line disables the model even if a `.env` file contains a key.
 
-`config.py` parses `backend/.env` first, then the repository-root `.env`, using `os.environ.setdefault`. Real process environment variables take precedence over both, and `backend/.env` takes precedence over the root file. The parser handles `KEY=value` lines, ignores comments, and strips surrounding quotes. Because values already in the environment are never overwritten, a stale `GEMINI_MODELS` line in a `.env` file overrides the code default.
+## Settings that are not environment variables
 
-### Secrets handling
+These are constants in code and require an edit and a restart:
 
-`.env` files are git-ignored (only `.env.example` is tracked). The key is sent only in the `x-goog-api-key` request header and is not logged by the application.
+- The selectable models (`MODEL_OPTIONS` in `config.py`): `gemini-3.5-flash-lite` (default), `gemini-3.5-flash`, `gemini-3.6-flash`, `gemini-3.8-flash`, `gemini-3-flash-preview`. The selected model is chosen per request in the interface; the others are the fallback order.
+- `MAX_REVISER_ITERATIONS` = 8 and `MAX_WRITER_ATTEMPTS` = 3.
+- The static file allowlists in `backend/app/main.py` and `frontend/server.mjs`.
 
-## Usage
+## Secrets handling
 
-### Chat with images
+- The API key and token are read from the environment or from untracked `.env` files. `.gitignore` excludes `.env` and `.env.*` except `.env.example`.
+- The key is sent only in the `x-goog-api-key` header to the Gemini API. It is never returned by any endpoint, and `/api/health` reports only whether a key is configured.
+- The API token entered in the browser is kept in `sessionStorage` for that tab only.
 
-The landing page is a chat. Describe the beam in words, or attach up to three images (PNG, JPEG or WebP; click the paperclip, paste, or drop them on the composer). The browser downsizes each image to at most 1800 px before upload. Gemini reads the image as data, never as instructions, and returns a verbatim transcription of the values it can see; those values must also appear in that transcription (or in your text) to pass the existing grounding check, and the transcription is shown in the answer so you can verify it. All numbers in the reply still come from the deterministic calculator and verifier. Images are sent to Gemini but are not stored in the audit log (only their count). `POST /api/chat` accepts `images: [{"mime": "image/png", "data": "<base64>"}]`.
+# Usage
 
-### Start the backend (uvicorn)
+## Start the backend
 
-```bash
+```
 cd backend
-python3 -m pip install -r requirements.txt
 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-The backend serves the JSON API under `/api` and, on its own, also serves the web page at http://127.0.0.1:8000.
+Open `http://127.0.0.1:8000/`. The backend serves the interface and the API from one origin, provided the `frontend/` directory sits next to `backend/`.
 
-Development mode (auto-reload on code changes):
+## Start the frontend through Node (optional)
 
-```bash
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-
-Production-style run (explicit single worker, because the SQLite audit lock is process-local; see Deployment):
-
-```bash
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
-```
-
-Bind to `0.0.0.0` only behind a firewall or reverse proxy. The application has only an optional shared token (`SDCV_API_TOKEN`), no TLS and no user accounts.
-
-### Start the frontend (npm)
-
-The frontend is a dependency-free Node.js server (Node 18 or later) that serves the static page and proxies `/api/*` to the backend, so the browser uses a single origin. Start the backend first, then in a second terminal:
-
-```bash
 cd frontend
 npm start
 ```
 
-Open http://127.0.0.1:3000. Settings are read from the environment:
+Open `http://127.0.0.1:3000/`. To change the port or the backend address:
 
-```bash
+```
 PORT=4000 npm start
-HOST=0.0.0.0 npm start
 BACKEND_URL=http://127.0.0.1:9000 npm start
 ```
 
-- `PORT` — listening port, default `3000`.
-- `HOST` — bind address, default `127.0.0.1`.
-- `BACKEND_URL` — where `/api/*` is forwarded, default `http://127.0.0.1:8000`.
+## Development mode
 
-If the backend is not running, the frontend returns HTTP 502 with a `backend unreachable` message for API calls.
-
-### Run both in the background
-
-```bash
-cd backend && nohup python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../backend.log 2>&1 &
-cd frontend && nohup npm start > ../frontend.log 2>&1 &
+```
+cd backend
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Stop them with `kill` on the process IDs, or with `pkill -f "uvicorn app.main:app"` and `pkill -f "node server.mjs"`. These are manual commands; there is no process supervisor configuration in the repository.
+Frontend files are served with `Cache-Control: no-cache`, so a browser refresh picks up edits. A new frontend file must be added to the allowlist in `backend/app/main.py` and in `frontend/server.mjs`, otherwise `/static/<name>` returns 404.
 
-### Verify the deployment
+## Production mode
 
-```bash
-curl http://127.0.0.1:8000/api/health
-curl http://127.0.0.1:3000/api/health
+There is no production-specific configuration in the repository. Use a single worker (the rate limiter and the live-check cache are in memory) and place a reverse proxy with TLS in front:
+
+```
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-Both should return `"ok": true`. `llm_configured` must be `true` and `models` must list currently available Gemini models for natural-language mode to work.
+See Deployment.
 
-### CLI commands
+## Command line tools
 
-```bash
+```
 cd backend && python3 -m pytest -q
 cd benchmark && python3 run_benchmark.py
-cd benchmark && python3 run_benchmark.py --guards-only   # pre-flight checks and regex-guard metrics, no model, instant
-cd benchmark && python3 generate_guard_cases.py          # regenerates guard_cases.jsonl
+cd benchmark && python3 run_benchmark.py --guards-only
 cd benchmark && python3 run_benchmark.py --llm
 cd benchmark && python3 run_benchmark.py --baseline
 cd benchmark && python3 generate_cases.py
+cd benchmark && python3 generate_guard_cases.py
 ```
 
-### API examples
+## API usage examples
 
-```bash
-curl http://localhost:8000/api/health
+Structured design (no model needed for intake):
 
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
+```
+curl -s -X POST http://127.0.0.1:8000/api/design \
+  -H 'Content-Type: application/json' \
+  -d '{"span":{"value":6,"unit":"m"},"support":"simply_supported","b":{"value":300,"unit":"mm"},"D":{"value":550,"unit":"mm"},"cover":{"value":30,"unit":"mm"},"fck":25,"fy":500,"dead_load":{"value":15,"unit":"kN/m"},"live_load":{"value":12,"unit":"kN/m"},"exposure":"moderate"}'
+```
+
+Natural-language chat (needs `GEMINI_API_KEY`):
+
+```
+curl -s -X POST http://127.0.0.1:8000/api/chat \
+  -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","text":"Simply supported beam, 6 m span, 300 x 550 mm, cover 30 mm, M25 concrete, Fe500 steel, dead load 15 kN/m, live load 12 kN/m, moderate exposure."}]}'
-
-curl -X POST http://localhost:8000/api/design \
-  -H "Content-Type: application/json" \
-  -d '{"span":{"value":6,"unit":"m"},"support":"simply_supported","b":{"value":300,"unit":"mm"},"D":{"value":550,"unit":"mm"},"cover":{"value":30,"unit":"mm"},"fck":25,"fy":500,"dead_load":{"value":15,"unit":"kN/m"},"live_load":{"value":12,"unit":"kN/m"},"exposure":"moderate"}'
-
-curl -X POST http://localhost:8000/api/explore \
-  -H "Content-Type: application/json" \
-  -d '{"span":{"value":6,"unit":"m"},"support":"simply_supported","b":{"value":300,"unit":"mm"},"D":{"value":550,"unit":"mm"},"cover":{"value":30,"unit":"mm"},"fck":25,"fy":500,"dead_load":{"value":15,"unit":"kN/m"},"live_load":{"value":12,"unit":"kN/m"},"exposure":"moderate"}'
-
-curl "http://localhost:8000/api/runs?limit=10&status=designed&q=cantilever"
-curl http://localhost:8000/api/stats
-curl http://localhost:8000/api/runs/RUN_ID
-curl -o report.md http://localhost:8000/api/runs/RUN_ID/report.md
-curl -o runs.csv "http://localhost:8000/api/runs.csv?mode=chat"
-curl "http://localhost:8000/api/health?deep=true"
-
-# when SDCV_API_TOKEN is set
-curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8000/api/runs
-
-curl -X POST http://localhost:8000/api/runs/RUN_ID/review \
-  -H "Content-Type: application/json" \
-  -d '{"reviewer":"Eng. Name","note":"Checked"}'
 ```
 
-## API Documentation
+Choose a model for one request:
 
-All routes are under the same origin. Authentication is off unless `SDCV_API_TOKEN` is set; when it is, a missing or wrong token returns 401 on every route except `/api/health`. `POST /api/chat`, `/api/design` and `/api/explore` return 429 with a `Retry-After` header when the per-client limit is exceeded. Client address comes from the socket, or from `X-Forwarded-For` when the peer is a local reverse proxy (the bundled Node server sets it).
-
-### GET /api/health
-
-- Query: `deep` (default false) and `model` (one of the five option IDs; probes that model, default the first). With `deep=true` the response adds `llm`: a real model probe (`ok`, `model`, `latency_ms`, models skipped and why) and `unavailable_models` (configured IDs the API no longer lists). The deep result is cached for 60 s.
-- Response 200: `{"ok": true, "llm_configured": bool, "models": [...], "model_options": [{"id", "label", "note"} x 5], "default_model": str, "code_edition": "IS456:2000", "auth_required": bool, "rate_limit_per_min": int, "versions": {...}}`. `versions` contains app version, Python version, pydantic version, code edition and rules fingerprint.
-
-### GET /api/rules
-
-- Response 200: list of `{"rule_id", "title", "clause", "severity", "revisable"}` for all 19 rules.
-
-### POST /api/design
-
-- Query: optional `model`, one of the five IDs below (422 otherwise). The chosen model is tried first for the narrative and the others are fallbacks; the model that answered is in `llm_model`.
-- Request body (`RawIntake`): `span`, `b`, `D`, `cover`, `dead_load`, `live_load` as `{"value": number, "unit": string}`; `support` string (`simply_supported` or `cantilever`); `fck` and `fy` as number or string such as "M25"; `exposure` (`mild`, `moderate`, `severe`, `very severe`, `extreme`). All fields are optional at the schema level; missing ones produce a `needs_info` result.
-- Response 200: `RunResult` (below).
-- Status codes: 200 for every pipeline outcome (including rejected, out-of-scope, needs-info); 422 for a body that fails schema validation (for example a non-numeric `value`).
-
-### POST /api/chat
-
-- Query: optional `model`, as for `/api/design`.
-- Request body: `{"messages": [{"role": "user|assistant", "text": string (max 8000)}, ...] (1 to 20 items), "attachment_text": string (max 20000, default "")}`.
-- Response 200: `RunResult`.
-- Status codes: 200, 422 for schema violations. Model unavailability is reported inside the body with `status: "error"`, not as an HTTP error.
-
-### GET /api/kb
-
-- Response 200: `{topics: [{id, label, count}], entries: [{id, topic, title, summary, points, formulas, clause, tags, implemented}], count, note}`. Searching is done in the browser.
-
-### GET /api/system
-
-- Response 200: `{summary, facts, derivation_rules, verifier_rules, guardrail_rules, meta_rules, layers, nodes, edges, main_path, cognitive, interface}`. Tests check that its counts, facts, graph and route list match the code.
-
-### GET /api/scope
-
-- Response 200: supported scope, input limits (derived from the validation schema), declined and refused categories, fixed assumptions, reviser settings and rule count.
-
-### POST /api/explore
-
-- Request body: same as `/api/design`.
-- Response 200: `{"status": "ok", "base", "rows": [...], "lightest_passing", "passing", "scanned", "note"}` where each row has `b`, `D`, `d`, `ok`, `failed`, `warnings`, `ast_req`, `ast_prov`, `pt`, `bars`, `sv`, `concrete_area_mm2`, `self_weight`, `Mu`, `ld_actual`, `ld_allow`. Rows are sorted by concrete area then steel. For missing, invalid or out-of-scope input the status is `needs_info`, `rejected` or `out_of_scope` with an empty `rows`. Nothing is written to the audit log and no model is called.
-
-### GET /api/runs
-
-- Query: `limit` (1 to 200, default 50), `offset` (default 0), `status` (one of the run statuses), `mode` (`chat` or `structured`), `q` (matches summary, run id or reviewer; wildcards are escaped), `reviewed` (true or false). Invalid values return 422.
-- Response 200: list of `{id, created_at, status, mode, summary, reviewer, reviewed_at}` ordered by newest first. The `X-Total-Count` header carries the total number of matches.
-
-### GET /api/runs.csv
-
-- Same filters as `/api/runs` (up to 5000 rows). Response 200: `text/csv` attachment. Cell values starting with `=`, `+`, `-` or `@` are prefixed with an apostrophe to prevent spreadsheet formula injection.
-
-### GET /api/stats
-
-- Response 200: `{total, by_status, by_mode, reviewed, last_24h, models, narrative_source}`.
-
-### GET /api/runs/{run_id}
-
-- Response 200: the full row with `record` parsed to an object (`result`, `versions`, `llm_model`, plus mode-specific extras such as `messages`, `intake`, `raw_input`).
-- Response 404: `{"detail": "run not found"}`.
-
-### GET /api/runs/{run_id}/report.md
-
-- Response 200: a Markdown report (inputs, design, verifier checks, revision history, narrative, stamp, and the review entry if any) as an attachment. Response 404 if the run does not exist.
-
-### POST /api/runs/{run_id}/review
-
-- Request body: `{"reviewer": string (2 to 120), "note": string (max 2000, optional)}`.
-- Response 200: `{"ok": true}`. Response 404 if the run does not exist. Response 422 for invalid body.
-- This records a name and note in the audit log. It is not a certification.
-
-### GET /
-
-Serves `frontend/index.html`. Static assets are served at `/static/*`.
-
-### RunResult
-
-Fields: `run_id`, `status`, `mode` (`structured` or `chat`), `message`, `question`, `missing`, `errors`, `out_of_scope`, `conversions`, `original_input`, `final_input`, `design`, `checks`, `iterations`, `report`, `narrative`, `narrative_source` (`llm` or `template`), `sketch_svg`, `guardrail_events`, `llm_model`, `stamp`.
-
-`status` values:
-
-- `designed` — all error-level checks pass.
-- `needs_engineer` — an error-level check failed that cannot be resolved by resizing, or the revision limit or size limits were reached.
-- `needs_info` — required fields are missing, or loads appear factored; `question` carries the follow-up.
-- `rejected` — input failed range or unit validation; `errors` lists reasons.
-- `out_of_scope` — unsupported feature.
-- `refused` — request to approve, certify, reduce safety margins, remove structural elements or skip inspections.
-- `error` — the model is not configured or could not be reached or parsed (chat mode).
-
-### Error handling
-
-Domain errors are returned as 200 responses with a descriptive `status`. FastAPI/Pydantic return 422 for malformed bodies or invalid query values. The explicit HTTP errors are 404 (unknown run or static file), 401 (token required but missing or wrong) and 429 (rate limit exceeded, with `Retry-After`).
-
-## Data Flow Explanation
-
-### How data enters
-
-Through `POST /api/chat` (free text and optional pasted attachment), `POST /api/design` (structured fields) or `POST /api/explore` (structured fields, scan only; this path is not audited and uses no model).
-
-### How it is processed
-
-1. Chat only: scope and unsafe regex screens run on the user's own words (not on the attachment). Matches return immediately with no model call.
-2. Chat only: injection patterns are matched against the brief and attachment and logged as `injection_suspected` events. The attachment is passed to the model inside `<attachment>` tags with a system rule that it is data, not instructions.
-3. Chat only: emails and phone numbers are replaced with `[email]` and `[phone]` before transmission.
-4. Chat only: the intake call returns JSON with an `intent` and field values in the user's original units.
-5. Chat only: grounding. Each numeric field (span, b, D, cover, loads, fck, fy) must match a number found in the user's text or attachment, otherwise it is nulled and an `ungrounded_values_dropped` event is logged.
-6. Chat only: if the model reports the loads as factored, the user is asked for characteristic loads.
-7. Normalisation converts units to mm, m and kN/m, maps grade strings and aliases, and validates through `BeamInput`.
-8. `design_with_verification` runs the calculator and all rules. If error-level rules fail and all failures are revisable, the reviser grows the section and the loop repeats, up to 8 revisions.
-9. `report.py` converts the result into `ReportData` strings. The writer model receives only this JSON.
-10. The number-trace guardrail checks the narrative and the draft stamp. On failure it re-prompts with the offending numbers, up to 3 attempts, then uses the template.
-
-### Where it is stored
-
-Each run is serialised into `runs.record` in `backend/data/audit.db`, with tool and rules versions and the model name.
-
-### How it is returned
-
-The `RunResult` is returned as JSON, including the SVG sketch and the narrative. The browser renders it and can fetch history from `/api/runs`.
-
-## Database Schema
-
-SQLite, one table, created by `AuditLog` if absent:
-
-```sql
-CREATE TABLE IF NOT EXISTS runs (
-  id TEXT PRIMARY KEY, created_at TEXT NOT NULL, status TEXT NOT NULL, mode TEXT NOT NULL,
-  summary TEXT, record TEXT NOT NULL, reviewer TEXT, reviewed_at TEXT, review_note TEXT
-);
+```
+curl -s -X POST 'http://127.0.0.1:8000/api/design?model=gemini-3.5-flash' -H 'Content-Type: application/json' -d '{...}'
 ```
 
-- `id` — 12-character hex run ID (primary key; implicit unique index).
-- `created_at` — UTC ISO-8601 timestamp.
-- `record` — JSON text: `result` (the full `RunResult`), `versions`, `llm_model`, and extras (`raw_input` in structured mode; `messages`, `attachment_chars`, `intake` in chat mode).
-- `reviewer`, `reviewed_at`, `review_note` — set by the review endpoint.
-- There are no foreign keys. Two secondary indexes exist: `idx_runs_created` on `created_at` (descending) and `idx_runs_status` on `status`. Search with `q` uses `LIKE` and scans the table.
-- Writes use `INSERT OR REPLACE` under a process-local lock; there is no migration system.
+Section explorer, history, report and review:
 
-## Testing
+```
+curl -s -X POST http://127.0.0.1:8000/api/explore -H 'Content-Type: application/json' -d '{...same body as /api/design...}'
+curl -s 'http://127.0.0.1:8000/api/runs?status=designed&limit=10'
+curl -o report.md http://127.0.0.1:8000/api/runs/RUN_ID/report.md
+curl -s -X POST http://127.0.0.1:8000/api/runs/RUN_ID/review -H 'Content-Type: application/json' -d '{"reviewer":"A. Engineer, reg. 1234","note":"checked"}'
+```
 
-```bash
+When `SDCV_API_TOKEN` is set, add a header to every request except `/api/health`:
+
+```
+-H 'Authorization: Bearer YOUR_TOKEN'
+```
+
+# API Documentation
+
+All routes are on one origin. Responses under `/api/` carry `Cache-Control: no-store` and the security headers. Domain outcomes (declined, rejected, needs more information, model unavailable) are returned with HTTP 200 and a `status` field; HTTP error codes are reserved for transport, validation and authorisation problems.
+
+Common errors on every `/api/` route:
+
+- 401 `{"detail": "missing or invalid API token"}` with `WWW-Authenticate: Bearer`, when a token is configured and missing or wrong (not applied to `/api/health`). The token may be sent as `Authorization: Bearer <token>` or `X-API-Key: <token>`.
+- 422 Pydantic validation error, for a malformed body or query parameter (for example a `model` value that is not one of the configured models, or an out-of-range `limit`).
+- 429 `{"detail": "rate limit exceeded; retry in <n>s"}` with `Retry-After`, for `POST /api/chat`, `/api/design` and `/api/explore` when the per-client, per-route limit is exceeded.
+
+## Result statuses
+
+- `designed`: all error-level rules pass (the section may have been revised).
+- `needs_engineer`: an error-level rule that resizing cannot fix failed, the reviser reached its limit, or the section reached size limits.
+- `needs_info`: required fields are missing; `question` and `missing` are set.
+- `rejected`: input failed unit or range validation; `errors` lists the reasons.
+- `out_of_scope`: a feature outside the supported scope was detected.
+- `refused`: an unsafe request was detected.
+- `error`: natural-language intake could not run (no key) or the model could not be reached or returned unusable output.
+
+## GET /api/health
+
+- Query: `deep` (boolean, default false), `model` (one of the configured model identifiers).
+- Response: `ok`, `llm_configured`, `models`, `model_options` (each with `id`, `label`, `note`), `default_model`, `code_edition`, `auth_required`, `rate_limit_per_min`, `versions` (`app`, `python`, `pydantic`, `code_edition`, `rules_fingerprint`), `db_ok`.
+- With `deep=true`, also `llm`: `probe` (`ok`, `model`, `latency_ms`, `skipped` per-model errors, or `error`), `unavailable_models` (configured models not listed by the API, or null if the lookup failed) and `cached`. The live check makes one real model call and is cached for 60 seconds per model.
+- Status codes: 200. Does not require the token.
+
+## GET /api/rules
+
+- Response: a list of verifier rules, each with `rule_id`, `title`, `clause`, `severity` (`error` or `warning`) and `revisable`.
+
+## GET /api/scope
+
+- Response: `code`, `supported`, `limits` (bounds read from `BeamInput`, allowed grades, supports and exposures, cantilever maximum, maximum D/b), `out_of_scope`, `refused`, `fixed_assumptions`, `reviser`, `rule_count`, `limits_note`.
+
+## GET /api/kb
+
+- Response: `topics` (each with `id`, `label`, `count`), `entries` (each with `id`, `topic`, `title`, `summary`, `points`, `formulas`, `tags`, `clause`, `implemented`), `count`, `note`.
+
+## GET /api/system
+
+- Response: `summary` (counts and fingerprint), `facts`, `derivation_rules`, `verifier_rules`, `guardrail_rules`, `meta_rules`, `layers`, `nodes`, `edges`, `main_path`, `cognitive`, `interface`.
+
+## POST /api/design
+
+- Query: `model` (optional).
+- Body (`RawIntake`): `span`, `b`, `D`, `cover`, `dead_load`, `live_load` as `{"value": number, "unit": string}`; `support` string; `fck`, `fy` number or string such as "M25"; `exposure` string. Missing fields produce `needs_info`.
+- Response (`RunResult`): `run_id`, `status`, `mode` (`structured`), `message`, `question`, `missing`, `errors`, `out_of_scope`, `conversions`, `original_input`, `final_input`, `design` (all calculator values, including `eps_cu`), `checks` (each with `rule_id`, `title`, `clause`, `passed`, `value`, `limit`, `op`, `unit`, `decimals`, `severity`, `revisable`, `message`), `iterations`, `report` (pre-formatted strings), `narrative`, `narrative_source` (`llm` or `template`), `image_text`, `sketch_svg`, `guardrail_events`, `llm_model`, `stamp`, `trace` (each stage with `stage`, `origin`, `ms`, `status`) and `llm_attempts` (each with `model`, `outcome`, `ms`).
+- The run is written to the audit log. The narrative uses Gemini when a key is configured, otherwise the template.
+- Status codes: 200, 401, 422, 429.
+
+## POST /api/chat
+
+- Query: `model` (optional).
+- Body: `messages` (1 to 20 items, each `role` of `user` or `assistant` and `text` up to 8000 characters), `attachment_text` (up to 20000 characters, treated as data), `images` (up to 3; each `mime` of `image/png`, `image/jpeg` or `image/webp` and base64 `data` up to 5,000,000 characters whose leading bytes must match the declared type).
+- Response: `RunResult` with `mode` `chat`.
+- Status codes: 200, 401, 422, 429. A missing key or an unreachable model is returned as 200 with status `error`.
+
+## POST /api/explore
+
+- Body: same as `POST /api/design`.
+- Response: `status` (`ok`, `needs_info`, `rejected`, `out_of_scope`), `base` (`b`, `D`), `rows` (51 candidate sections: width b minus 50, b, b plus 50 mm, clamped to 150 to 1000 mm, and depth D minus 100 to D plus 300 mm in 25 mm steps; each with `b`, `D`, `d`, `ok`, `failed`, `warnings`, `ast_req`, `ast_prov`, `pt`, `bars`, `sv`, `concrete_area_mm2`, `self_weight`, `Mu`, `ld_actual`, `ld_allow`), `lightest_passing`, `passing`, `scanned`, `conversions`, `note`.
+- No model call and no audit write.
+
+## GET /api/runs
+
+- Query: `limit` (1 to 200, default 50), `offset` (default 0), `status`, `mode` (`chat` or `structured`), `q` (up to 80 characters, matched against run ID, summary and reviewer), `reviewed` (boolean).
+- Response: a list of `id`, `created_at`, `status`, `mode`, `summary`, `reviewer`, `reviewed_at`, newest first. Header `X-Total-Count` carries the total number of matches.
+
+## GET /api/runs.csv
+
+- Query: same filters as `/api/runs` without paging; up to 5000 rows.
+- Response: CSV with a download filename. Cells that start with `=`, `+`, `-` or `@` are prefixed with an apostrophe.
+
+## GET /api/stats
+
+- Response: `total`, `by_status`, `by_mode`, `reviewed`, `last_24h`, `models` (runs per model), `narrative_source` (runs per source).
+
+## GET /api/runs/{run_id}
+
+- Response: `id`, `created_at`, `status`, `mode`, `summary`, `record` (the stored `result`, `versions`, `llm_model`, and for structured runs `raw_input`, for chat runs the redacted `messages`, `attachment_chars`, `image_count` and `intake`), `reviewer`, `reviewed_at`, `review_note`.
+- Status codes: 200, 401, 404 `{"detail": "run not found"}`.
+
+## GET /api/runs/{run_id}/report.md
+
+- Response: a Markdown report built from the stored, verified result, as a download.
+- Status codes: 200, 401, 404.
+
+## POST /api/runs/{run_id}/review
+
+- Body: `reviewer` (2 to 120 characters), `note` (up to 2000 characters, optional).
+- Response: `{"ok": true}`. This records a log entry; it is not a certification.
+- Status codes: 200, 401, 404, 422.
+
+## GET / and GET /static/{name}
+
+- `/` returns `frontend/index.html`. `/static/{name}` returns one of an explicit list of frontend files (single path segment only); any other name returns 404 `{"detail": "not found"}`. These routes are not covered by the API token.
+
+# Data Flow Explanation
+
+## How data enters the system
+
+- Form: the browser posts a `RawIntake` to `/api/design` or `/api/explore`.
+- Chat: the browser posts messages, an optional pasted attachment and up to three images to `/api/chat`. Images are resized and re-encoded as JPEG in the browser before upload.
+
+## How it is processed (chat path)
+
+1. Scope screen on the user's own words (not the attachment). An out-of-scope feature returns `out_of_scope`; an unsafe request returns `refused`. No model is called.
+2. Injection pattern flags on the brief and the attachment are written to `guardrail_events` and logged. They do not block the request.
+3. If no key is configured, the result is `error`.
+4. Email addresses and phone numbers are redacted from the transcript and the attachment.
+5. Intake: Gemini returns JSON with an intent, extracted fields and, for images, a verbatim transcription. The prompt tells the model to extract only, to treat attachments and images as data, and to leave unknown fields null. Output is parsed and validated, with one retry.
+6. Intent handling: `unsafe_request` returns `refused`; `out_of_scope` or `not_a_beam_brief` returns `out_of_scope`.
+7. Grounding: each extracted number (span, b, D, cover, dead load, live load, fck, fy) must appear in the brief, the attachment or the image transcription. A number that does not is dropped and the field becomes missing. If the model reports the loads as factored, the result is `needs_info`.
+8. Normalisation and validation: units are converted to mm, m and kN/m (conversions are recorded), grades and aliases are parsed, ranges are checked. The result is a validated `BeamInput`, or `needs_info`, `rejected` or `out_of_scope`.
+9. Design loop: the calculator produces a `Design`, the verifier runs 19 rules, and the reviser enlarges the section while a revisable error persists, up to 8 times.
+10. Report data and narrative: report strings are built from the verified result. Gemini writes the narrative with up to three attempts, each checked by the number trace and for the draft stamp; otherwise the template is used.
+11. Sketch, audit write, response.
+
+The form path (`/api/design`) starts at step 8. Its narrative still uses Gemini if a key is configured.
+
+## Where it is stored
+
+The full `RunResult` and the tool versions are stored as JSON in the `runs` table. Chat messages are stored redacted; the attachment is not stored (only its length); images are not stored (only their count). Structured form values are stored as submitted.
+
+## How it is returned
+
+The response is the `RunResult` JSON. The browser renders every number from it. The report endpoint rebuilds a Markdown report from the stored record, not from the model.
+
+# Database Schema
+
+SQLite, file `backend/data/audit.db` (or `SDCV_DATA_DIR`). Created with `CREATE TABLE IF NOT EXISTS` on start. There is no migration tool.
+
+## Table runs
+
+- `id` TEXT, primary key. A 12-character hexadecimal run ID.
+- `created_at` TEXT, not null. UTC ISO 8601 timestamp to the second.
+- `status` TEXT, not null. One of the result statuses.
+- `mode` TEXT, not null. `chat` or `structured`.
+- `summary` TEXT. A one-line description, for example the support, span, grades and section with the outcome.
+- `record` TEXT, not null. JSON: `result` (the `RunResult`, including `trace` and `llm_attempts` for runs made after those fields were added), `versions` (`app`, `python`, `pydantic`, `code_edition`, `rules_fingerprint`), `llm_model`, and the mode-specific fields described under `GET /api/runs/{run_id}`.
+- `reviewer` TEXT, `reviewed_at` TEXT, `review_note` TEXT. Set by the review endpoint.
+
+## Indexes and constraints
+
+- Primary key on `id`. `INSERT OR REPLACE` is used on save.
+- `idx_runs_created` on `created_at` descending.
+- `idx_runs_status` on `status`.
+- No foreign keys. Statistics use SQLite `json_extract` over `record`, which scans the table.
+
+# Testing
+
+## How to run tests
+
+```
 cd backend
 python3 -m pytest -q
 ```
 
-The suite does not call the network. The model is replaced by `FakeLLM` or `None`. Last run in this repository: 97 passed.
+The suite needs no network and no key. To keep it away from the real audit log and the model, set a throwaway data directory and an empty key:
 
-Coverage notes:
+```
+SDCV_DATA_DIR=$(mktemp -d) GEMINI_API_KEY= python3 -m pytest -q
+```
 
-- Calculator is tested against limiting-moment coefficients, Table 19 values, a flexure round trip, a SP 16-style value and a hand calculation.
-- Verifier is tested by mutation: injected calculator faults must be caught.
-- Pipeline tests cover hallucinating writer fallback, accepted writer output, incomplete briefs, dropped hallucinated extractions, attachment injection, out-of-scope and unsafe bypass of the model, invalid input, structured mode, and the API endpoints.
-- Gemini client behaviour (fallback, no retry on 404 or timeout, time budget, per-model errors) is tested with mocked HTTP. Token auth, rate limiting, security headers, the static whitelist, filters, CSV safety, exports, scope, explorer and deep health are covered by `test_v2_features.py`.
+The suite currently reports 332 passing tests (25 calculator, 14 verifier mutation, 23 guardrails, 10 knowledge system, 12 pipeline and API, 17 v2 features, 218 guard cases, 13 benchmark tooling).
 
-Benchmark (`benchmark/run_benchmark.py`): runs without a key for structured and deterministic-screen cases. Chat categories (incomplete, injection) need `--llm` and a key.
+## Test structure
 
-Missing tests:
+- `conftest.py` supplies a `base_input` fixture and a scripted `FakeLLM` implementing the `LLM` protocol, so pipeline tests control exactly what the model "returns", including hallucinated numbers.
+- Calculator tests compare against IS 456 table values and SP 16-style closed forms.
+- Mutation tests perturb the calculator output and require the verifier to flag the fault.
+- API tests use FastAPI's `TestClient`; Gemini HTTP calls are mocked for the client tests.
+- Guard tests are driven by the labelled files in `benchmark/`.
 
-- No automated test calls the real Gemini API.
-- No frontend tests are committed. The browser flows (all tabs, report download, review, CSV export, token dialog, reduced motion) were exercised with throwaway Playwright scripts that are not in the repository.
-- Worked examples from textbooks are not yet included as golden fixtures (stated in the previous README).
-- No coverage tooling is configured, and no CI runs the tests.
+## Benchmark
 
-## Deployment
+```
+cd benchmark
+python3 run_benchmark.py
+```
 
-No Dockerfile, compose file, process manager configuration or CI/CD pipeline exists in the repository. A minimal deployment is:
+It prints the pre-flight checks on both case files, runs the structured and deterministic cases, and reports the regex guards with a confusion matrix, safety and usability rates, MCC with a bootstrap interval and trivial baselines. Chat cases that need the model are counted as skipped without a key (18 of 60: the 10 incomplete and 8 injection cases). `--llm` runs them through Gemini; `--baseline` compares plain Gemini against the verified Ast on golden cases.
 
-1. Provision Python 3.10 or later.
-2. Install `backend/requirements.txt` into a virtual environment.
-3. Provide `GEMINI_API_KEY` and `SDCV_API_TOKEN` (and optionally `RATE_LIMIT_PER_MIN`) through the process environment rather than a file.
-4. Run `uvicorn app.main:app --host 127.0.0.1 --port 8000` under a process supervisor.
-5. Place a reverse proxy in front that terminates TLS. The application provides one shared token and a per-process rate limit, but no TLS and no user accounts. If you run several instances behind the proxy, rate-limit state is not shared.
-6. Persist and back up `backend/data/`.
+## Coverage notes
 
-The backend serves the frontend from the path `../frontend` relative to `backend`, so the directory layout must be preserved. Alternatively, run the frontend as its own process with `npm start` (see Usage) and point your reverse proxy at port 3000; it forwards `/api/*` to the backend.
+- No coverage tool is configured.
+- The guard metrics are measured on a small set that the patterns were tuned on, so they describe regression behaviour, not expected real-world accuracy.
 
-Scaling considerations: SQLite with a process-local lock supports a single instance. Running multiple workers works for reads but the lock does not coordinate between processes; use a server database before scaling horizontally.
+## Missing tests
 
-## Logging and Monitoring
+- No automated frontend or end-to-end browser tests are committed.
+- No test calls the live Gemini API; model behaviour is covered only through mocks and the optional benchmark.
+- The Node server (`server.mjs`) has no tests.
+- No concurrency, load or long-running tests.
+- The rate limiter and the audit log are tested functionally, not under contention.
 
-- Python `logging` is configured at INFO level. Each `/api/*` request logs method, path, status, duration and client address (`sdcv.http`); model calls log the model used and latency, and failures log the per-model errors (`sdcv.llm`). Output is plain text on stderr, not JSON.
-- The audit log is the primary record: inputs, guardrail events, verdicts, model name, tool versions and rules fingerprint.
-- `guardrail_events` in each result record events such as `injection_suspected`, `pii_redacted`, `ungrounded_values_dropped`, `number_trace_rejected`, `writer_llm_error`, `fallback_template`, `intake_llm_error`.
-- No error tracking, metrics or tracing is integrated. `/api/health?deep=true` makes a real model call to check reachability.
+# Deployment
 
-## Security Considerations
+## What exists
 
-- Authentication: optional single shared bearer token (`SDCV_API_TOKEN`), compared in constant time. Off by default. There are no user accounts and no per-user authorization; anyone with the token can read all runs and log reviews.
-- Input validation: Pydantic models on all endpoints; length limits on chat messages (8000 characters, 20 messages, 20000-character attachment); range and enum validation on engineering inputs.
-- Prompt injection: attachment text is delimited and declared as data; regex flags are logged but not blocking; extracted numbers are grounded against the original text; the model never produces numbers that reach the design; the narrative is number-traced. The regex screens are heuristic and bypassable by paraphrase.
-- PII: emails and phone numbers are redacted before being sent to the model. Names, addresses and other identifiers are not redacted.
-- Rate limiting: in-memory sliding window per client (default 30 per minute) on the three design endpoints. State is per process and resets on restart.
-- Response headers: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy` and a Content-Security-Policy restricting scripts and connections to the same origin. API responses are `Cache-Control: no-store`.
-- Static files: the backend and the Node server each serve only an explicit allowlist of frontend files; add every new file to both lists (`ASSETS` in `backend/app/main.py` and in `frontend/server.mjs`).
-- CORS: not configured; the frontend is same-origin.
-- Secrets: the API key is read from the environment or `.env` and sent as a request header. Do not commit `.env`.
-- Known issues:
-  - Without `SDCV_API_TOKEN`, `GET /api/runs/{id}` exposes the stored record to any caller.
-  - The audit log stores redacted messages only, but redaction covers emails and phone numbers, not names or addresses.
-  - Dependencies are unpinned.
-  - The review field accepts any name; it is a log entry only.
+The repository contains no Dockerfile, compose file, process-supervisor configuration, CI/CD workflow or infrastructure code. Deployment is manual.
 
-## Performance Considerations
+## Production deployment steps
 
-- The calculator and rules are pure computation and complete in milliseconds; the 97-test suite runs in about two seconds.
-- Latency is dominated by model calls. A complete chat run (intake plus writer) measured about 8 seconds on `gemini-3.5-flash-lite` on 11 Nov 2026 (an incomplete brief, which needs only the intake call, about 2 seconds; the form path with a narrative about 7 seconds); a structured run without a model is near-instant.
-- Endpoints are synchronous `def` functions, so FastAPI runs them in its thread pool. Each model call blocks a worker thread for its duration.
-- Each model request times out after `LLM_TIMEOUT_S` (25 s by default) and a timed-out model is skipped, not retried. One `generate()` call is capped at `LLM_BUDGET_S` (60 s). A design request that needs both an intake and a narrative call can therefore still take up to two budgets in the worst case. A 429 quota error costs a 2 s pause before the next model is tried. Order `GEMINI_MODELS` with responsive models first.
-- During verification, quota exhaustion on the first model pushed a structured design (which also calls the model for the narrative) to about 35 s. The Scope and status tab shows which model is actually answering.
-- No caching. Identical briefs trigger new model calls.
-- SQLite opens a new connection per operation.
+1. Install Python and the dependencies on the host (see Installation). Pin the versions you test with, because `requirements.txt` has lower bounds only.
+2. Provide `GEMINI_API_KEY`, `SDCV_API_TOKEN` and optionally `RATE_LIMIT_PER_MIN` through the process environment rather than a file.
+3. Run one uvicorn worker bound to loopback: `python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`. Supervise it with your platform's process manager.
+4. Put a reverse proxy with TLS in front. The application has no TLS and no user accounts. The backend takes the client address from the socket, or from the first `X-Forwarded-For` entry only when the socket peer is a loopback address, so run the proxy on the same host or the rate limiter will see one client.
+5. Optionally run `frontend/server.mjs` (Node) as the public entry point, with `BACKEND_URL` pointing at the backend. It overwrites `X-Forwarded-For` with the real client address.
+6. Back up `backend/data/audit.db` (or `SDCV_DATA_DIR`). It is the only persistent state.
 
-## Limitations
+## Environment separation
 
-- Scope is limited to singly reinforced rectangular beams under UDL (see Overview).
-- The deflection modification factor and Table 19 shear strength use analytic fits, not the code's chart and table values.
-- Table 5, 15, 16 and 20 values and the maximum clear spacing values were entered manually and, according to the previous README, should be verified against the printed IS 456:2000.
-- Design shear is taken at the support face (conservative). Span is the user-supplied effective span.
-- Fixed assumptions: 8 mm 2-legged stirrups, 20 mm aggregate, 12 mm hanger bars, 25 kN/m3 concrete, bar diameters 12, 16, 20, 25, 32 mm.
-- The grounding check compares numeric values only; it cannot detect a correct number assigned to the wrong field.
-- The number-trace guardrail accepts any number present anywhere in the result, not only the number belonging to the check being described.
-- The chat-mode benchmark categories (`run_benchmark.py --llm`) have not been run end to end. Only spot checks of the intake, narrative and injection paths were made against the live model.
-- Unfactored versus factored loads depend on the model's reading of the brief.
-- Authentication is a single shared token; there are no user accounts. Rate-limit state is per process. No containerisation or CI.
+There is no named environment concept. Separate environments by using different environment variables and different `SDCV_DATA_DIR` values. Use a throwaway data directory for tests.
 
-## Roadmap / Future Improvements
+## Scaling considerations
 
-Based on the current state of the code:
+- Run a single process. The rate limiter, the live-check cache and the per-process model client are in memory, so multiple workers would each keep their own counters.
+- SQLite with one connection per call and a write lock is suitable for a single host. A shared database would need a different `AuditLog` implementation.
+- Model latency, not computation, dominates request time.
 
-- Add textbook worked examples as golden fixtures and verify the code tables against the standard.
-- Replace the analytic fits for Table 19 and Fig. 4 with the tabulated values, or document their error bounds.
-- Add per-user authentication and a reverse-proxy configuration with TLS.
-- Add a Dockerfile, pinned dependencies and a CI workflow running pytest.
-- Add structured (JSON) logging and metrics beyond the request log.
-- Add tests with recorded Gemini responses for the intake and writer prompts.
-- Commit browser tests for the frontend and run the `--llm` benchmark.
-- Make the endpoints asynchronous or move model calls off request threads, and add process supervision for the two services.
-- Regenerate `SDC-V_v2.docx` to match v0.2.0.
-- Extend scope features currently refused: T-beams, doubly reinforced and continuous beams.
+# Logging and Monitoring
 
-## Troubleshooting
+## Logging system
 
-- `/api/health` shows `llm_configured: false` or the UI shows "Gemini key missing": `GEMINI_API_KEY` was not found in the environment, `backend/.env` or the root `.env`.
-- Chat returns `status: error` with "language model could not be reached": check `guardrail_events` for `intake_llm_error`. The detail contains the per-model failure.
-- HTTP 404 "no longer available" from Gemini: a model in `MODEL_OPTIONS` (`backend/app/config.py`) has been retired. Use "Run live model check" in Scope and status, then replace the entry.
-- Very slow responses, then a different model answered: the selected model timed out or was out of quota and the next one was tried. The answering model is shown on the result (`llm_model`). Pick another model in the header selector.
-- HTTP 429 from Gemini: free-tier quota; the client retries once and then moves to the next model. The deep status check lists which models were skipped and why.
-- HTTP 429 from SDC-V itself, with `Retry-After`: the per-client rate limit. Wait, or raise `RATE_LIMIT_PER_MIN`.
-- HTTP 401 "missing or invalid API token": `SDCV_API_TOKEN` is set on the server. Enter it in the token dialog, or send `Authorization: Bearer <token>`.
-- Frontend returns 502 "backend unreachable": the backend is not running or `BACKEND_URL` is wrong.
-- Design requests take 10 to 35 s: the narrative call is slow or the first model is out of quota. The form path works without a model if you unset `GEMINI_API_KEY`.
-- Narrative source shows "deterministic template": the model output failed number tracing three times, or the model was unavailable. This is intended fail-closed behaviour; see `guardrail_events`.
-- Status `rejected` with "unit ... not recognised": supply a unit (mm, cm, m, in, ft for lengths; kN/m, N/m, t/m and similar for loads). Loads in kN or kN/m2 are rejected.
-- `ModuleNotFoundError: app`: run uvicorn and pytest from the `backend` directory.
-- Frontend not served: `frontend/` must sit next to `backend/`.
+- Python `logging`, configured in `main.py` with `logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")`, written to standard error.
+- Logger `sdcv.http`: one line per API request: method, path, status, duration in milliseconds and client address.
+- Logger `sdcv.llm`: an INFO line for each successful model call (model, milliseconds) and a WARNING with the per-model errors when every model fails.
 
-## Contributing
+## Log levels
 
-The repository contains no contribution guide or linter configuration. Observed conventions:
+INFO and above are emitted. There is no configuration for the level, no structured (JSON) logging and no log rotation.
 
-- Python with type annotations, `from __future__ import annotations`, module docstrings, Pydantic v2 models, and short functions.
-- Each verifier rule is a single function with a clause ID; add new checks through the `@rule` decorator and add a mutation test.
-- Add tests for any change to calculator, guardrails or pipeline behaviour, and run `python3 -m pytest -q` before submitting.
-- No branching strategy or commit message format is defined. A short imperative subject line followed by a descriptive paragraph is suggested.
+## Error tracking and observability
 
-## License
+- No error-tracking service, metrics endpoint or tracing integration.
+- Each run stores a per-stage trace (stage, origin deterministic or language model, milliseconds, status) and the model attempts (model, outcome, milliseconds) in the audit record. The interface shows them for a run, and shows a status bar with backend, key, database, edition, rules fingerprint, selected model, last run time and rate limit.
+- `GET /api/health` reports versions, key presence, database reachability and, with `deep=true`, a live model check.
+- `GET /api/stats` aggregates runs by status, mode, model and narrative source.
 
-No license file is present in the repository. All rights are reserved by default until a license is added.
+# Security Considerations
+
+## Authentication
+
+An optional single shared token (`SDCV_API_TOKEN`). When set, every `/api/*` route except `/api/health` requires it as a bearer token or an `X-API-Key` header, compared in constant time. When unset, the API is open. The static routes (`/` and `/static/*`) are never protected.
+
+## Authorization
+
+None. There are no users or roles. Any client with the token (or any client, if no token is set) can list and read every run, export the log and log a review. The review endpoint records a name and a note; it does not verify identity and is not a certification.
+
+## Input validation
+
+- Pydantic validation on every request body and query parameter, with explicit length limits on chat messages, attachment text and images.
+- Images must match their declared type by leading bytes and are limited in size and number.
+- Engineering inputs pass unit normalisation and range validation (`BeamInput`) before any calculation.
+- Model identifiers are validated against the configured list.
+- Static files are served from allowlists with single-segment names, which blocks path traversal.
+- CSV export neutralises spreadsheet formula injection.
+
+## Prompt-injection and output controls
+
+- The scope screen and unsafe-request screen run on the user's own words before any model call.
+- Attachments and image text are labelled as data in the intake prompt. Regex injection flags are logged but do not block.
+- Extracted numbers must be grounded in the user's text, attachment or image transcription.
+- Narratives are checked by the number trace and fall back to a template.
+- The model never produces a value used in a calculation or a verdict.
+
+## Rate limiting
+
+A sliding window of 60 seconds per client address and route for `POST /api/chat`, `/api/design` and `/api/explore`, default 30 per minute, in process memory (idle entries are pruned when more than 5000 keys accumulate). Over the limit returns 429 with `Retry-After`.
+
+## Secrets management
+
+Environment variables or untracked `.env` files; see Configuration. Nothing in the repository stores a secret. Email addresses and phone numbers are redacted before text is sent to the model and before chat messages are stored.
+
+## Response headers
+
+The backend sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin` and a Content-Security-Policy of `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'`. The Node server sets a subset of these on the pages it serves (nosniff, frame denial, referrer policy and the same Content-Security-Policy).
+
+## Known vulnerabilities and risks
+
+- No authentication by default, and no per-user access control when a token is set.
+- No TLS in the application; it must be provided by a proxy.
+- The Content-Security-Policy allows inline styles (`'unsafe-inline'` for styles) because the interface sets some styles from script.
+- Redaction covers only email addresses and phone numbers. Other personal data in a brief or an image would be sent to the model provider.
+- Images attached to a chat are sent to Google. They are not stored locally.
+- Structured form values are stored in the audit log as submitted.
+- Dependencies are not pinned and are not scanned.
+- The injection detector is a list of regular expressions and can be bypassed by paraphrase; it only logs. The scope and unsafe-request screens can likewise be bypassed by paraphrase, in which case the model-side intent check and the deterministic validation are the remaining controls.
+
+# Performance Considerations
+
+## Bottlenecks
+
+- Gemini latency. In development tests a single call took roughly 1.5 to 5 seconds, depending on the model, and models can return 503 or time out. A chat design makes one intake call and at least one narrative call (up to three).
+- The calculator and verifier are pure computation; the per-stage trace shows well under a millisecond for a typical beam on the development machine.
+
+## Time bounds
+
+- Each model call times out at `LLM_TIMEOUT_S` (default 25 s). Each `generate()` call, across all models and retries, is limited to `LLM_BUDGET_S` (default 60 s). A request that makes several model calls can take longer than one budget. The Node proxy times out upstream requests at 300 seconds.
+- A model that times out is skipped, not retried; models that return 429, 500 or 503 get one retry.
+
+## Caching
+
+- The live model check is cached for 60 seconds per model so polling cannot spend quota.
+- Frontend files are served with `Cache-Control: no-cache`; API responses with `no-store`.
+- No result cache. Identical designs are recomputed and re-logged.
+
+## Optimisation notes and scalability
+
+- The explorer evaluates 51 sections in one request with no model call.
+- `GET /api/stats` uses `json_extract` over every row, so it grows linearly with the log.
+- The CSV export is capped at 5000 rows. History is paged.
+- Single process only (see Deployment).
+
+# Limitations
+
+- Scope is narrow: singly reinforced rectangular beams, simply supported or cantilever, UDL only, IS 456:2000 only. Anything else is declined, not approximated.
+- The output is a draft. The tool does not certify, approve or sign off anything.
+- Some IS 456 data is hand-entered or fitted: the shear strength factor tau_c uses a closed-form fit of Table 19, the deflection modification factor uses an analytic fit of Figure 4, and the code tables are transcribed by hand. The golden tests check them against reference values to a tolerance of 2%, but no formal verification against the standard has been done.
+- Assumptions are fixed: 2-legged 8 mm stirrups, 12 mm hanger bars, nominal maximum aggregate size 20 mm, no moment redistribution, design shear taken at the support face, nominal cover measured to the stirrup.
+- Natural-language intake and narratives depend on a third-party API, which can be unavailable, rate limited or change model availability. Model availability on a free key varies: during development the Pro models returned quota errors and older Flash models returned 404.
+- The number trace checks that a number exists in the report, not that it is attached to the right quantity.
+- The regex guards are tuned on a small labelled set and are bypassable by paraphrase.
+- A single shared token, no roles, no run ownership.
+- Single process and single host; the audit log is a local SQLite file with no migrations.
+- No Docker, CI, linting, type checking, lock file or frontend tests in the repository.
+- The Home page example is a precomputed fixture and will not change if the calculator changes until it is regenerated.
+
+# Roadmap / Future Improvements
+
+These follow from gaps visible in the current code. None is implemented.
+
+- Add a Dockerfile, a pinned dependency lock and a CI workflow that runs the backend tests and the guard benchmark.
+- Add committed end-to-end browser tests for the interface.
+- Add roles and per-user run ownership, with denied attempts written to the audit log, if the tool is to be used by more than one person.
+- Add a schema migration mechanism for the audit database and an option for a shared database.
+- Strengthen the output guardrail from number-level to quantity-level checking, so a real number attached to the wrong quantity is rejected.
+- Add a semantic guard layer behind the regex screens that can only add refusals, and measure it with the existing benchmark metrics before enabling it.
+- Grow the guard benchmark with held-out cases and matched pairs so its figures are not in-sample, and store benchmark runs with their configuration and rules fingerprint.
+- Replace the fitted tau_c and deflection factors with tabulated values checked against the standard.
+- Extend scope only with new calculator functions, rules and tests together (for example flanged sections), keeping the declined-feature screens in step.
+- Add structured logging, log level configuration and a metrics endpoint.
+
+# Troubleshooting
+
+- Chat returns status `error` with a message about the Gemini key: set `GEMINI_API_KEY` in `backend/.env`, the root `.env` or the environment, then restart. Use the form path in the meantime.
+- Chat or a design returns `error` listing models with HTTP 404, 429, 503 or "timed out": the listed models were unavailable. Choose another model in the header selector, run the live check on the Scope and status view (it marks models that failed), or retry later.
+- The interface shows "backend offline" or API calls fail with 502 through the Node server: the backend is not running or `BACKEND_URL` is wrong. Check `http://127.0.0.1:8000/api/health`.
+- 401 on every call: `SDCV_API_TOKEN` is set. Enter the token in the interface (the "API token" button) or send `Authorization: Bearer <token>`.
+- 429: the per-minute limit was reached. Wait for `Retry-After` seconds or raise `RATE_LIMIT_PER_MIN`.
+- Blank page or `/static/<file>` returns 404: the `frontend/` directory must sit next to `backend/`, and any new frontend file must be added to the allowlists in `backend/app/main.py` and `frontend/server.mjs`.
+- A `GEMINI_API_KEY` set in `.env` is still used when you wanted it off: set `GEMINI_API_KEY=` (empty) in the environment, which takes precedence.
+- Tests write to your real audit log: run them with `SDCV_DATA_DIR` set to a temporary directory.
+- `audit.db` locked or missing: the data directory must be writable; the file is created on first start.
+- Port already in use: choose another port with `--port` (backend) or `PORT` (Node server).
+
+# Contributing
+
+## Code style
+
+- Python: type hints, `from __future__ import annotations`, a module docstring explaining purpose, small functions, Pydantic models at boundaries. No formatter or linter is configured.
+- JavaScript: native ES modules, no build step, no third-party dependencies, all colours from `theme.css` tokens, no inline scripts (the Content-Security-Policy forbids them).
+- Do not compute engineering values in the frontend and do not let the model produce a value used in a calculation or a verdict.
+
+## Working on the calculator or rules
+
+- Changes to `calculator.py`, `tables.py` or `verifier.py` must keep the golden and mutation tests passing. Adding or changing a rule changes the rules fingerprint, which is stored with every run.
+- Add tests with every behaviour change. Run the full suite with a throwaway `SDCV_DATA_DIR` and an empty `GEMINI_API_KEY`.
+- Changes to the regex guards should be accompanied by cases in `benchmark/generate_guard_cases.py` (regenerate `guard_cases.jsonl`) so false blocks and misses are measured.
+
+## Branching strategy
+
+No strategy is enforced. The history is linear on `main`. Suggested practice: short-lived feature branches merged after the test suite and the guard benchmark pass.
+
+## Commit message format
+
+No format is enforced. Existing commits use a short imperative subject line followed by an optional explanatory body. Keep each change in its own commit so it can be reviewed and reverted on its own.
+
+# License
+
+No license file was found in the repository. Without a license, the repository grants no explicit permission to use, copy or distribute the code; add one before sharing it.
