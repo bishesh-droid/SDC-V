@@ -68,12 +68,15 @@
 
   // --------------------------------------------------------------- router
   const loaders = { home: () => loadHome(), kb: () => loadKb(), system: () => loadSystem(), history: () => loadHistory(), scope: () => loadScope() };
-  function show(view, push = true) {
-    if (!$(`#view-${view}`)) view = "home";
+  function show(route, push = true) {
+    let [view, sub] = route.split("/");
+    if (!$(`#view-${view}`)) { view = "home"; sub = ""; }
+    route = sub ? `${view}/${sub}` : view;
+    kbTopic = view === "kb" ? sub || "" : "";
     if (view !== "home") stopDemo();
     $$(".view").forEach((v) => { v.hidden = v.id !== `view-${view}`; });
     $$(".nav [data-view]").forEach((b) => b.setAttribute("aria-selected", b.dataset.view === view));
-    if (push && location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
+    if (push && location.hash !== "#" + route) history.replaceState(null, "", "#" + route);
     loaders[view]?.();
   }
   $$(".nav [data-view]").forEach((b) => { b.onclick = () => show(b.dataset.view); });
@@ -456,9 +459,9 @@
     if (ex) {
       const { first, final, steps } = ex;
       st.push(["Calculator", `${first.b} x ${first.D} mm: Mu ${first.Mu} kN·m, Ast required ${first.ast_req} mm², ${first.bars}.`]);
-      st.push(["Verifier", first.failed.length ? `Fails ${first.failed.join(", ")}. This section is not acceptable.` : "All error checks pass."]);
-      st.push(["Reviser", final ? `Depth +25 mm per step, ${steps} steps, to ${final.b} x ${final.D} mm. Every rule is run again.` : "No passing section within the scan range; an engineer is needed."]);
-      if (final) st.push(["Verified result", `${final.bars}, stirrups at ${final.sv} mm c/c, span/d ${final.ld_actual} against ${final.ld_allow} allowed.`]);
+      st.push(first.failed.length ? ["Verifier", `Fails ${first.failed.join(", ")}. This section is not acceptable.`, "fail", `Fails ${first.failed.join(", ")}.`] : ["Verifier", "All error checks pass.", "pass", "All error checks pass."]);
+      st.push(["Reviser", final ? `Depth +25 mm per step, ${steps} steps, to ${final.b} x ${final.D} mm. Every rule is run again.` : "No passing section within the scan range; an engineer is needed.", "warn"]);
+      if (final) { const vr = `${final.bars}, stirrups at ${final.sv} mm c/c, span/d ${final.ld_actual} against ${final.ld_allow} allowed.`; st.push(["Verified result", vr, "pass", vr]); }
     } else {
       st.push(["Calculator", "Loads, flexure, bars, shear, deflection and detailing are computed by plain Python."]);
       st.push(["Verifier", "19 clause-tagged rules decide every pass or fail, including two independent cross-checks."]);
@@ -498,7 +501,7 @@
     } catch { /* the animation falls back to text without numbers */ }
     const stages = demoStages(ex);
     demoLen = stages.length - 1;
-    $("#demo").innerHTML = stages.map(([n, t], i) => `<li><span class="n">${i + 1}</span><div><b>${esc(n)}</b><span>${esc(t)}</span></div></li>`).join("");
+    $("#demo").innerHTML = stages.map(([n, t, tone, hot], i) => `<li${tone ? ` data-tone="${tone}"` : ""}><span class="n">${i + 1}</span><div><b>${esc(n)}</b><span>${hot ? esc(t).replace(esc(hot), (m) => `<em class="t">${m}</em>`) : esc(t)}</span></div></li>`).join("");
     demoStep = 0; paintDemo(); startDemo();
   }
 
@@ -523,7 +526,7 @@
   bindGo();
 
   // ------------------------------------------------------- knowledge base
-  let kb = null, kbTopic = "all";
+  let kb = null, kbTopic = "";
   async function loadKb() {
     if (!kb) {
       try { kb = await api("/api/kb"); } catch (err) { $("#kb-list").innerHTML = `<p class="hint">${esc(err.message)}</p>`; return; }
@@ -531,10 +534,12 @@
     renderTopics(); renderKb();
     $("#kb-note").textContent = kb.note;
   }
+  // index page: one card per topic. topic page (#kb/<id>): only that topic's entries.
   function renderTopics() {
-    const btn = (id, label, n) => `<button type="button" class="chip" data-topic="${esc(id)}" aria-pressed="${kbTopic === id}">${esc(label)} <small>${n}</small></button>`;
-    $("#kb-topics").innerHTML = btn("all", "All", kb.count) + kb.topics.map((t) => btn(t.id, t.label, t.count)).join("");
-    $$("#kb-topics [data-topic]").forEach((b) => { b.onclick = () => { kbTopic = b.dataset.topic; renderTopics(); renderKb(); }; });
+    const topic = kb.topics.find((t) => t.id === kbTopic);
+    $("#kb-index").hidden = !!topic; $("#kb-topicpage").hidden = !topic;
+    $("#kb-topics").innerHTML = kb.topics.map((t) => `<a class="topiccard" href="#kb/${esc(t.id)}"><b>${esc(t.label)}</b><small>${t.count} ${t.count === 1 ? "entry" : "entries"}</small></a>`).join("");
+    if (topic) { $("#kb-title").textContent = topic.label; $("#kb-tcount").textContent = `${topic.count} entries`; scrollTo(0, 0); }
   }
   function kbHay(e) { return (e.title + " " + e.summary + " " + e.points.join(" ") + " " + e.formulas.join(" ") + " " + e.tags.join(" ") + " " + e.clause).toLowerCase(); }
   function kbScore(e, toks) {
@@ -546,22 +551,22 @@
       + (e.formulas.length ? `<pre>${e.formulas.map(esc).join("\n")}</pre>` : "");
     const meta = [label, e.clause].filter(Boolean).map(esc).join(" · ");
     return `<article class="kbe"><div class="kbt"><b>${esc(e.title)}</b>${e.implemented ? '<span class="tagi">in calculator</span>' : ""}</div>
-      ${meta ? `<div class="src">${meta}</div>` : ""}<p>${esc(e.summary)}</p>${body ? `<details><summary>Details</summary>${body}</details>` : ""}</article>`;
+      ${meta ? `<div class="src">${meta}</div>` : ""}<p>${esc(e.summary)}</p>${window.kbChart ? window.kbChart(e.id) : ""}${body ? `<details${kbTopic ? " open" : ""}><summary>Details</summary>${body}</details>` : ""}</article>`;
   }
   function renderKb() {
-    const q = $("#kb-search").value.trim().toLowerCase();
+    const q = kbTopic ? "" : $("#kb-search").value.trim().toLowerCase();
     const toks = q.split(/\s+/).filter(Boolean);
     const label = Object.fromEntries(kb.topics.map((t) => [t.id, t.label]));
-    let list = kb.entries.filter((e) => (kbTopic === "all" || e.topic === kbTopic) && toks.every((k) => kbHay(e).includes(k)));
+    let list = kb.entries.filter((e) => (!kbTopic || e.topic === kbTopic) && toks.every((k) => kbHay(e).includes(k)));
     $("#kb-count").textContent = `${list.length} of ${kb.count} entries`;
     const out = $("#kb-list");
+    if (!kbTopic && !toks.length) { out.innerHTML = ""; return; }
     if (!list.length) { out.innerHTML = `<p class="hint">Nothing matches "${esc(q)}". Try a shorter keyword or another topic.</p>`; return; }
     if (toks.length) {
       list = [...list].sort((a, b) => kbScore(b, toks) - kbScore(a, toks));
       out.innerHTML = list.map((e) => kbEntry(e, label[e.topic])).join("");
     } else {
-      const groups = kb.topics.map((t) => [t, list.filter((e) => e.topic === t.id)]).filter(([, l]) => l.length);
-      out.innerHTML = groups.map(([t, l]) => `<h3 class="kbh">${esc(t.label)}</h3>${l.map((e) => kbEntry(e, "")).join("")}`).join("");
+      out.innerHTML = list.map((e) => kbEntry(e, "")).join("");
     }
   }
   let kbT;
@@ -648,16 +653,36 @@
         lines.map((t, i) => `<text x="${p.x}" y="${p.y + (i - (lines.length - 1) / 2) * 13 + 4}" text-anchor="middle">${esc(t)}</text>`).join("")}</g>`;
     });
     svg += "</svg>";
-    body.innerHTML = `<div class="row" style="margin:0 0 8px"><button class="ghost sm" id="trace-btn" type="button">Trace a run</button><span class="hint" style="align-self:center">Boxes are modules. Solid arrows are the main flow, dashed arrows are optional or return paths. Select a box for details.</span></div>
+    body.innerHTML = `<div class="row" style="margin:0 0 8px"><button class="ghost sm" id="trace-btn" type="button">Trace a run</button><span class="hint" style="align-self:center">Boxes are modules. Solid arrows are the main flow, dashed arrows are optional or return paths. Hover or select a box for details.</span></div>
       <div class="flowwrap">${svg}</div><div id="node-info" class="nodeinfo hint">Select a module.</div>`;
-    const info = (id) => {
+    const facts = (id) => {
       const n = sys.nodes.find((x) => x.id === id);
       const into = sys.edges.filter((e) => e.target === id).map((e) => sys.nodes.find((x) => x.id === e.source).label);
       const out = sys.edges.filter((e) => e.source === id).map((e) => sys.nodes.find((x) => x.id === e.target).label);
+      return { n, into, out };
+    };
+    const info = (id) => {
+      const { n, into, out } = facts(id);
       $("#node-info").className = "nodeinfo";
       $("#node-info").innerHTML = `<b>${esc(n.label)}</b> <span class="src">${esc(sys.layers.find((l) => l.id === n.layer).label)}</span><p>${esc(n.role)}</p>
         <dl class="kv wide"><dt>Module</dt><dd>${esc(n.module)}</dd><dt>Libraries</dt><dd>${esc(n.libraries.join(", ") || "none")}</dd><dt>Receives from</dt><dd>${esc(into.join(", ") || "-")}</dd><dt>Sends to</dt><dd>${esc(out.join(", ") || "-")}</dd></dl>`;
     };
+    // hover / focus popover with the same facts as the detail panel
+    const tip = document.createElement("div"); tip.className = "nodetip"; tip.setAttribute("role", "tooltip"); tip.hidden = true; body.appendChild(tip);
+    const showTip = (g) => {
+      const { n, into, out } = facts(g.dataset.node);
+      tip.innerHTML = `<b>${esc(n.label)}</b><span class="src">${esc(sys.layers.find((l) => l.id === n.layer).label)}</span><p>${esc(n.role)}</p>
+        <dl><dt>Module</dt><dd>${esc(n.module)}</dd><dt>Libraries</dt><dd>${esc(n.libraries.join(", ") || "none")}</dd><dt>In</dt><dd>${esc(into.join(", ") || "-")}</dd><dt>Out</dt><dd>${esc(out.join(", ") || "-")}</dd></dl>`;
+      tip.hidden = false;
+      const r = g.getBoundingClientRect(), t = tip.getBoundingClientRect();
+      let x = Math.min(Math.max(8, r.left + r.width / 2 - t.width / 2), innerWidth - t.width - 8);
+      let y = r.bottom + 8; if (y + t.height > innerHeight - 8) y = Math.max(8, r.top - t.height - 8);
+      tip.style.left = x + "px"; tip.style.top = y + "px";
+    };
+    const hideTip = () => { tip.hidden = true; };
+    $$(".node", body).forEach((g) => { g.onmouseenter = () => showTip(g); g.onmouseleave = hideTip; g.addEventListener("focus", () => showTip(g)); g.addEventListener("blur", hideTip); });
+    $(".flowwrap", body).addEventListener("scroll", hideTip);
+    addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
     $$(".node", body).forEach((g) => { g.onclick = () => info(g.dataset.node); g.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); info(g.dataset.node); } }; });
     $("#trace-btn").onclick = () => {
       clearInterval(traceTimer);

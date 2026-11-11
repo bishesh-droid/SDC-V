@@ -40,13 +40,15 @@ def gemini_api_key() -> str:
 
 
 # Models offered in the web UI. Only the API key comes from the environment; the model is chosen per request.
-# The first entry is the default. Each was checked against the live API (plain and JSON-mode calls) on 11 Nov 2026.
+# The first entry is the default. Tested against the live API with plain and JSON-mode calls on 11 Nov 2026.
+# Gemini Pro models (3.1 Pro, Pro-latest) returned 429 quota errors on the free key and 2.5 Pro/Flash return 404 for new users,
+# so they are left out. Gemma 4 was unreliable in the same test (500/503, and it printed its reasoning instead of clean JSON).
 MODEL_OPTIONS = [
     {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite", "note": "Fastest, good for most briefs (default)"},
-    {"id": "gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash-Lite", "note": "Fast and stable"},
-    {"id": "gemini-3-flash-preview", "label": "Gemini 3 Flash (preview)", "note": "Fast, preview release"},
     {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash", "note": "Balanced speed and quality"},
-    {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "note": "Newest working Flash, slower"},
+    {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "note": "Newer Flash, stronger, slightly slower"},
+    {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash", "note": "Latest Flash; often busy, falls back if it is"},
+    {"id": "gemini-3-flash-preview", "label": "Gemini 3 Flash (preview)", "note": "Fast preview release"},
 ]
 DEFAULT_MODEL = MODEL_OPTIONS[0]["id"]
 

@@ -1,0 +1,43 @@
+/* SDC-V theme tokens. The only place colours are defined. */
+:root,:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#F7F8FA; --surface:#FFFFFF; --surface-2:#EEF1F5; --border:#D9DEE6;
+  --text:#111827; --text-muted:#5B6575; --text-faint:#636D7E; /* faint darkened from #9AA3B2 for AA */
+  --accent:#1F5FE0; --accent-strong:#1748B5; --on-accent:#FFFFFF;
+  --pass:#047857; --fail:#B42318; --warn:#9A3C06;             /* darkened from spec for AA on tinted fills */
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0E1116; --surface:#151A22; --surface-2:#1C222C; --border:#2A313D;
+  --text:#E8ECF2; --text-muted:#98A2B3; --text-faint:#838D9D; /* faint lightened from #5D6676 for AA */
+  --accent:#4D8DFF; --accent-strong:#2F6FEB; --on-accent:#0A0F1A;
+  --pass:#34D399; --fail:#F87171; --warn:#FBB040;
+}
+/* before the script runs (or without JS) follow the OS */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme]){
+    color-scheme:dark;
+    --bg:#0E1116; --surface:#151A22; --surface-2:#1C222C; --border:#2A313D;
+    --text:#E8ECF2; --text-muted:#98A2B3; --text-faint:#838D9D;
+    --accent:#4D8DFF; --accent-strong:#2F6FEB; --on-accent:#0A0F1A;
+    --pass:#34D399; --fail:#F87171; --warn:#FBB040;
+  }
+}
+:root{
+  /* derived tints, built only from the tokens above */
+  --pass-bg:color-mix(in srgb,var(--pass) 9%,var(--bg));
+  --fail-bg:color-mix(in srgb,var(--fail) 9%,var(--bg));
+  --warn-bg:color-mix(in srgb,var(--warn) 10%,var(--bg));
+  --accent-bg:color-mix(in srgb,var(--accent) 9%,var(--bg));
+  --scrim:color-mix(in srgb,var(--bg) 70%,transparent);
+  --radius:6px;
+  --sans:"Instrument Sans","Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+/* smooth theme switch: colours only. Class is set by theme.js just for the switch. */
+html.theme-anim,html.theme-anim *,html.theme-anim *::before,html.theme-anim *::after{
+  transition:background-color .18s ease,border-color .18s ease,color .18s ease,fill .18s ease,stroke .18s ease!important;
+}
+@media (prefers-reduced-motion:reduce){
+  html.theme-anim,html.theme-anim *,html.theme-anim *::before,html.theme-anim *::after{transition:none!important}
+}

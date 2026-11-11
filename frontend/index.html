@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SDC-V · Structural Design Copilot</title>
 <meta name="description" content="Guardrailed AI drafting of RCC beams to IS 456:2000. The AI drafts; the code checks; the engineer signs.">
+<script src="/static/theme-init.js"></script>
+<link rel="stylesheet" href="/static/theme.css">
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -15,6 +17,10 @@
   </div>
   <div class="pills">
     <span class="pill" id="pill-code">IS 456:2000</span>
+    <button class="themebtn" id="theme-toggle" type="button" aria-label="Dark theme" aria-pressed="false" title="Switch theme">
+      <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
     <label class="modelpick" for="model-select">Model
       <select id="model-select" aria-label="Gemini model"></select>
     </label>
@@ -158,10 +164,16 @@
 <!-- ============================== KNOWLEDGE BASE -->
 <div class="view" id="view-kb" hidden>
   <section class="panel wide">
-    <div class="head"><h2>Knowledge base</h2><span class="src" id="kb-count"></span></div>
-    <label class="sr" for="kb-search">Search the knowledge base</label>
-    <input id="kb-search" type="search" placeholder="Search keywords, e.g. development length, tau_c, wind, M25, Hardy Cross" autocomplete="off">
-    <div class="topics" id="kb-topics" role="group" aria-label="Topics"></div>
+    <div id="kb-index">
+      <div class="head"><h2>Knowledge base</h2><span class="src" id="kb-count"></span></div>
+      <label class="sr" for="kb-search">Search the knowledge base</label>
+      <input id="kb-search" type="search" placeholder="Search keywords, e.g. development length, tau_c, wind, M25, Hardy Cross" autocomplete="off">
+      <nav class="topicgrid" id="kb-topics" aria-label="Topics"></nav>
+    </div>
+    <div id="kb-topicpage" hidden>
+      <a class="back" href="#kb">&larr; Knowledge base</a>
+      <div class="head"><h2 id="kb-title"></h2><span class="src" id="kb-tcount"></span></div>
+    </div>
     <div id="kb-list"><p class="hint">Loading...</p></div>
     <p class="hint" id="kb-note"></p>
   </section>
@@ -200,6 +212,8 @@
 </dialog>
 
 <footer>Draft planning tool. Any design produced requires review and sign-off by a licensed structural engineer. · BITS Pilani · CE F417</footer>
+<script src="/static/theme.js"></script>
+<script src="/static/kbcharts.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
