@@ -31,6 +31,7 @@ const ASSETS = new Set([
   "system.js",
   "history.js",
   "scope.js",
+  "viewer.js",
   "fixture.js",
   "kbcharts.js",
   "theme-init.js",

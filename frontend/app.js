@@ -10,9 +10,11 @@ import "./kb.js";
 import "./system.js";
 import "./history.js";
 import "./scope.js";
+import { initViewer } from "./viewer.js";
 
 installTooltips();
 initChrome();
+initViewer();
 document.addEventListener("click", (e) => { const g = e.target.closest("[data-go]"); if (g) show(g.dataset.go); });
 loadHealth().then(() => { if (location.hash === "#scope") show("scope", false); });
 show((location.hash || "#home").slice(1), false);

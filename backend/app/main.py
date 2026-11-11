@@ -230,6 +230,7 @@ if config.FRONTEND_DIR.exists():
         "system.js",
         "history.js",
         "scope.js",
+        "viewer.js",
         "fixture.js",
         "kbcharts.js",
         "theme-init.js",
