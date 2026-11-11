@@ -35,6 +35,7 @@ class GeminiClient:
         self.budget = budget if budget is not None else config.llm_budget_s()
         self.last_model: str | None = None
         self.last_errors: dict[str, str] = {}
+        self.attempts: list[dict] = []  # [{model, outcome, ms}] for every upstream call made by this client
 
     def for_model(self, model: str | None) -> "GeminiClient":
         """A per-request client that tries `model` first and falls back to the other configured models."""
@@ -75,25 +76,34 @@ class GeminiClient:
                                    headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"})
                 except httpx.TimeoutException:
                     errors[model] = f"timed out after {time.monotonic() - t0:.0f}s"
+                    self._note(model, "timeout", t0)
                     break  # a model that hangs is skipped, not retried
                 except httpx.HTTPError as e:
                     errors[model] = f"network error {type(e).__name__}"
+                    self._note(model, "network_error", t0)
                     time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
                     continue
                 if r.status_code == 200:
                     text = _extract_text(r.json())
                     if text:
                         self.last_model = model
+                        self._note(model, "ok", t0)
                         log.info("llm ok model=%s ms=%d", model, (time.monotonic() - t0) * 1000)
                         return text
                     errors[model] = "empty response"
+                    self._note(model, "unusable_output", t0)
                     break
                 errors[model] = f"HTTP {r.status_code} {_api_message(r)}"
+                self._note(model, f"http_{r.status_code}", t0)
                 if r.status_code in (429, 500, 503) and attempt == 0:
                     time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
                     continue
                 break  # try next model (404 unknown model, 400, quota, ...)
         return self._fail(errors)
+
+    def _note(self, model: str, outcome: str, t0: float) -> None:
+        self.attempts.append({"model": model, "outcome": outcome, "ms": int((time.monotonic() - t0) * 1000)})
+        del self.attempts[:-60]  # bounded: the shared client also serves health probes
 
     def _fail(self, errors: dict[str, str]):
         log.warning("llm failed: %s", errors)

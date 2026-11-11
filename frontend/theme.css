@@ -1,43 +1,68 @@
-/* SDC-V theme tokens. The only place colours are defined. */
-:root,:root[data-theme="light"]{
-  color-scheme:light;
-  --bg:#F7F8FA; --surface:#FFFFFF; --surface-2:#EEF1F5; --border:#D9DEE6;
-  --text:#111827; --text-muted:#5B6575; --text-faint:#636D7E; /* faint darkened from #9AA3B2 for AA */
-  --accent:#1F5FE0; --accent-strong:#1748B5; --on-accent:#FFFFFF;
-  --pass:#047857; --fail:#B42318; --warn:#9A3C06;             /* darkened from spec for AA on tinted fills */
+/* SDC-V design tokens. The only place colours are defined; components and SVGs use these variables (or currentColor).
+   Origin colours: --accent = deterministic (calculator, verifier, reviser, audit, tables); --llm = language model.
+   --pass / --warn / --fail are reserved for verdicts. */
+:root{
+  --sans:"Geist","Inter Tight","Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:"JetBrains Mono","Geist Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  /* radius, spacing (4px base), motion */
+  --r-sm:4px; --r:6px; --radius:6px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s8:32px; --s10:40px;
+  --focus:2px solid var(--accent);
+  --t-fast:150ms; --t-theme:180ms;
+  --nav-w:216px; --nav-w-collapsed:56px;
 }
+
+/* dark (default when the OS asks for dark, and when chosen) */
 :root[data-theme="dark"]{
   color-scheme:dark;
-  --bg:#0E1116; --surface:#151A22; --surface-2:#1C222C; --border:#2A313D;
-  --text:#E8ECF2; --text-muted:#98A2B3; --text-faint:#838D9D; /* faint lightened from #5D6676 for AA */
-  --accent:#4D8DFF; --accent-strong:#2F6FEB; --on-accent:#0A0F1A;
-  --pass:#34D399; --fail:#F87171; --warn:#FBB040;
+  --bg:#070B14; --surface:#0D1422; --surface-2:#121B2E; --border:#1F2A44; --grid:#16213A;
+  --text:#E6EDF7; --text-muted:#9AA8C1; --text-faint:#8391AD;   /* faint lightened from #6B7A96 to reach AA on --bg and --surface */
+  --accent:#22D3EE; --accent-strong:#06B6D4; --on-accent:#031318;
+  --llm:#A78BFA;
+  --pass:#34D399; --warn:#FBBF24; --fail:#F87171;
+  --scrim:rgba(3,6,12,.66);
 }
-/* before the script runs (or without JS) follow the OS */
+/* light (drafting paper) */
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#F3F6FB; --surface:#FFFFFF; --surface-2:#E9EFF8; --border:#CBD5E5; --grid:#DCE5F2;
+  --text:#0B1220; --text-muted:#4A5872; --text-faint:#586680;   /* faint darkened from #6B7A96 to reach AA */
+  --accent:#0369A1; --accent-strong:#075985; --on-accent:#FFFFFF;
+  --llm:#6D28D9;
+  --pass:#047857; --warn:#A8480A; --fail:#B91C1C;
+  --scrim:rgba(11,18,32,.45);
+}
+/* before the init script runs, or without JS, follow the OS */
 @media (prefers-color-scheme:dark){
   :root:not([data-theme]){
     color-scheme:dark;
-    --bg:#0E1116; --surface:#151A22; --surface-2:#1C222C; --border:#2A313D;
-    --text:#E8ECF2; --text-muted:#98A2B3; --text-faint:#838D9D;
-    --accent:#4D8DFF; --accent-strong:#2F6FEB; --on-accent:#0A0F1A;
-    --pass:#34D399; --fail:#F87171; --warn:#FBB040;
+    --bg:#070B14; --surface:#0D1422; --surface-2:#121B2E; --border:#1F2A44; --grid:#16213A;
+    --text:#E6EDF7; --text-muted:#9AA8C1; --text-faint:#8391AD;
+    --accent:#22D3EE; --accent-strong:#06B6D4; --on-accent:#031318; --llm:#A78BFA;
+    --pass:#34D399; --warn:#FBBF24; --fail:#F87171; --scrim:rgba(3,6,12,.66);
   }
 }
+@media (prefers-color-scheme:light){
+  :root:not([data-theme]){
+    color-scheme:light;
+    --bg:#F3F6FB; --surface:#FFFFFF; --surface-2:#E9EFF8; --border:#CBD5E5; --grid:#DCE5F2;
+    --text:#0B1220; --text-muted:#4A5872; --text-faint:#586680;
+    --accent:#0369A1; --accent-strong:#075985; --on-accent:#FFFFFF; --llm:#6D28D9;
+    --pass:#047857; --warn:#A8480A; --fail:#B91C1C; --scrim:rgba(11,18,32,.45);
+  }
+}
+
+/* derived tints, built only from the tokens above */
 :root{
-  /* derived tints, built only from the tokens above */
-  --pass-bg:color-mix(in srgb,var(--pass) 9%,var(--bg));
-  --fail-bg:color-mix(in srgb,var(--fail) 9%,var(--bg));
-  --warn-bg:color-mix(in srgb,var(--warn) 10%,var(--bg));
-  --accent-bg:color-mix(in srgb,var(--accent) 9%,var(--bg));
-  --scrim:color-mix(in srgb,var(--bg) 70%,transparent);
-  --radius:6px;
-  --sans:"Instrument Sans","Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --pass-bg:color-mix(in srgb,var(--pass) 12%,var(--surface));
+  --fail-bg:color-mix(in srgb,var(--fail) 12%,var(--surface));
+  --warn-bg:color-mix(in srgb,var(--warn) 13%,var(--surface));
+  --accent-bg:color-mix(in srgb,var(--accent) 12%,var(--surface));
+  --llm-bg:color-mix(in srgb,var(--llm) 13%,var(--surface));
+  --hover:color-mix(in srgb,var(--text) 6%,transparent);
 }
-/* smooth theme switch: colours only. Class is set by theme.js just for the switch. */
+
+/* short colour transition on theme switch only (class set for ~200 ms by the theme control) */
 html.theme-anim,html.theme-anim *,html.theme-anim *::before,html.theme-anim *::after{
-  transition:background-color .18s ease,border-color .18s ease,color .18s ease,fill .18s ease,stroke .18s ease!important;
-}
-@media (prefers-reduced-motion:reduce){
-  html.theme-anim,html.theme-anim *,html.theme-anim *::before,html.theme-anim *::after{transition:none!important}
+  transition:background-color var(--t-theme) ease,border-color var(--t-theme) ease,color var(--t-theme) ease,fill var(--t-theme) ease,stroke var(--t-theme) ease!important;
 }

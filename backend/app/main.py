@@ -121,7 +121,7 @@ def health(deep: bool = False, model: str | None = Query(None, pattern=MODEL_PAT
     out = {"ok": True, "llm_configured": llm.available, "models": llm.models, "model_options": config.MODEL_OPTIONS, "default_model": config.DEFAULT_MODEL,
            "code_edition": T.CODE_EDITION,
            "auth_required": bool(config.api_token()), "rate_limit_per_min": config.rate_limit_per_min(),
-           "versions": tool_versions()}
+           "versions": tool_versions(), "db_ok": audit.ping()}
     if deep:
         out["llm"] = _deep_status(model)
     return out
@@ -213,7 +213,29 @@ def review(run_id: str, req: ReviewRequest):
 
 
 if config.FRONTEND_DIR.exists():
-    ASSETS = {"app.js": "text/javascript", "styles.css": "text/css"}
+    # explicit allowlist (flat filenames only): package.json and server.mjs live in the same folder
+    ASSETS = {n: ("text/css" if n.endswith(".css") else "text/javascript") for n in (
+        "app.js",
+        "core.js",
+        "fmt.js",
+        "ui.js",
+        "beam.js",
+        "chrome.js",
+        "result.js",
+        "design.js",
+        "explore.js",
+        "home.js",
+        "chat.js",
+        "kb.js",
+        "system.js",
+        "history.js",
+        "scope.js",
+        "fixture.js",
+        "kbcharts.js",
+        "theme-init.js",
+        "styles.css",
+        "theme.css",
+    )}
 
     @app.get("/static/{name}")
     def static_asset(name: str):

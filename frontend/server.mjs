@@ -14,7 +14,29 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
   "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
 };
-const ASSETS = new Set(["index.html", "app.js", "styles.css", "theme.css", "theme-init.js", "theme.js", "kbcharts.js"]);
+const ASSETS = new Set([
+  "index.html",
+  "app.js",
+  "core.js",
+  "fmt.js",
+  "ui.js",
+  "beam.js",
+  "chrome.js",
+  "result.js",
+  "design.js",
+  "explore.js",
+  "home.js",
+  "chat.js",
+  "kb.js",
+  "system.js",
+  "history.js",
+  "scope.js",
+  "fixture.js",
+  "kbcharts.js",
+  "theme-init.js",
+  "styles.css",
+  "theme.css",
+]);
 
 function proxy(req, res) {
   const up = http.request({

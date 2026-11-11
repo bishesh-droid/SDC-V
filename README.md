@@ -102,7 +102,7 @@ The structured path (`POST /api/design`) skips steps 2 to 5 and the intake call,
 
 ### Frontend architecture
 
-A dependency-free static page (`frontend/index.html`, `app.js`, `styles.css`) served by FastAPI at `/` with assets under `/static`, or by the Node server in `frontend/server.mjs`. The look is deliberately minimal: a plain black-and-white layout that follows the system light/dark setting, with no background effects. Eight tabs, addressable by URL hash:
+A dependency-free static page (`frontend/index.html` plus native ES modules and CSS) served by FastAPI at `/` with assets under `/static`, or by the Node server in `frontend/server.mjs`. The look is an "engineering instrument": a left sidebar, a status bar, light and dark themes (System, Light, Dark), and a two-colour convention that marks what the deterministic code produced (cyan or blue) against what the language model produced (violet). Pass, warning and fail colours are used for verdicts only. Ctrl/Cmd+K opens a command palette. Eight views, addressable by URL hash:
 
 - Home: an example run animated from real calculator output (it calls `/api/explore`, which is not audited), what the tool can do, and cards for the viewable database (knowledge base, facts, rules, meta-rules, endpoints, audit runs).
 - Assistant: chat with optional images and a pasted attachment; the answer is a compact card that opens the full report in Form design.
@@ -200,10 +200,14 @@ The suite reports 97 test results because some tests are parametrised.
 ### /frontend
 
 - `index.html` — Page structure: header with model status pill, eight navigation tabs (Home, Assistant, Form design, Explore sections, Knowledge base, Expert system, History, Scope and status), chat and form input, result container, token dialog.
-- `app.js` — Client logic: health check, chat and form submission, a minimal escaped Markdown renderer, result rendering, the explorer, history and scope views, the home demo, knowledge base search, the expert-system views and flow diagram, token handling, review submission, report and JSON download.
-- `styles.css` — Minimal styling that follows the system light/dark setting; print uses plain black-on-white.
+- `app.js` — Entry point; imports the modules below. All modules are flat files because `/static/{name}` is single-segment.
+- `core.js` (DOM helpers, API client, shared state), `fmt.js` (engineering notation, friendly model errors, count-up), `ui.js` (panel, pills, origin tags, tiles, data table, states, check cells, utilisation bars, title block, tooltips), `beam.js` (SVG drawings from returned values only), `chrome.js` (theme, sidebar, router, status bar, command palette), `result.js` (verdict dashboard, checks, trace waterfall, fallback chain), and one module per view: `home.js`, `chat.js`, `design.js`, `explore.js`, `kb.js`, `system.js`, `history.js`, `scope.js`.
+- `fixture.js` — Precomputed example for the Home page, generated once from the real calculator and verifier. Nothing is run or logged when Home plays it.
+- `theme.css` — The only place colours are defined (design tokens); `theme-init.js` applies the saved theme before first paint (an external script, because of the CSP).
+- `styles.css` — Components and layout; print uses plain black-on-white.
+- `kbcharts.js` — Charts for the knowledge base.
 - `package.json` — npm manifest. `npm start` runs `node server.mjs`. No third-party dependencies.
-- `server.mjs` — Node HTTP server. Serves `index.html`, `app.js` and `styles.css` (only those three files, which blocks path traversal) and proxies `/api/*` to `BACKEND_URL`, overwriting `X-Forwarded-For` with the real client address and adding security headers to the pages it serves.
+- `server.mjs` — Node HTTP server. Serves `index.html` and the explicitly listed asset files (a fixed allowlist, which blocks path traversal) and proxies `/api/*` to `BACKEND_URL`, overwriting `X-Forwarded-For` with the real client address and adding security headers to the pages it serves.
 
 ### /benchmark
 
@@ -576,7 +580,7 @@ Scaling considerations: SQLite with a process-local lock supports a single insta
 - PII: emails and phone numbers are redacted before being sent to the model. Names, addresses and other identifiers are not redacted.
 - Rate limiting: in-memory sliding window per client (default 30 per minute) on the three design endpoints. State is per process and resets on restart.
 - Response headers: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy` and a Content-Security-Policy restricting scripts and connections to the same origin. API responses are `Cache-Control: no-store`.
-- Static files: the backend serves only `app.js` and `styles.css` under `/static`; the Node server serves only `index.html`, `app.js` and `styles.css`.
+- Static files: the backend and the Node server each serve only an explicit allowlist of frontend files; add every new file to both lists (`ASSETS` in `backend/app/main.py` and in `frontend/server.mjs`).
 - CORS: not configured; the frontend is same-origin.
 - Secrets: the API key is read from the environment or `.env` and sent as a request header. Do not commit `.env`.
 - Known issues:

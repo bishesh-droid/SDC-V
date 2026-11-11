@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import platform
+import time
 import uuid
 from typing import Literal
 
@@ -34,6 +35,34 @@ class Iteration(BaseModel):
     action: str
 
 
+class TraceStep(BaseModel):
+    """Wall-clock timing of one pipeline stage. Presentation only: never hashed, fingerprinted or compared."""
+    stage: str
+    origin: Literal["deterministic", "llm"]
+    ms: float | None = None
+    status: str = "ok"
+
+
+class LLMAttempt(BaseModel):
+    model: str
+    outcome: str
+    ms: int
+
+
+class Tracer:
+    def __init__(self):
+        self.steps: list[TraceStep] = []
+
+    def add(self, stage: str, origin: str, ms: float | None, status: str = "ok") -> None:
+        for s in self.steps:  # a stage that runs more than once (e.g. calculator in the reviser loop) is summed
+            if s.stage == stage and s.ms is not None and ms is not None:
+                s.ms = round(s.ms + ms, 2)
+                if status != "ok":
+                    s.status = status
+                return
+        self.steps.append(TraceStep(stage=stage, origin=origin, ms=None if ms is None else round(ms, 2), status=status))
+
+
 class RunResult(BaseModel):
     run_id: str
     status: Status
@@ -57,6 +86,8 @@ class RunResult(BaseModel):
     guardrail_events: list[dict] = Field(default_factory=list)
     llm_model: str | None = None
     stamp: str = STAMP
+    trace: list[TraceStep] = Field(default_factory=list)
+    llm_attempts: list[LLMAttempt] = Field(default_factory=list)
 
 
 def tool_versions() -> dict:
@@ -65,13 +96,18 @@ def tool_versions() -> dict:
 
 
 # ----------------------------------------------------------- core design loop
-def design_with_verification(inp: BeamInput, max_iter: int = config.MAX_REVISER_ITERATIONS):
+def design_with_verification(inp: BeamInput, max_iter: int = config.MAX_REVISER_ITERATIONS, tr: Tracer | None = None):
     """Calculator -> rules -> (reviser -> calculator ...). Returns (final_input, design, checks, iterations, status)."""
     cur = inp
     its: list[Iteration] = []
     for i in range(max_iter + 1):
+        t0 = time.perf_counter()
         des = design_beam(cur)
+        t1 = time.perf_counter()
         checks = run_rules(cur, des)
+        if tr is not None:
+            tr.add("Calculator", "deterministic", (t1 - t0) * 1000)
+            tr.add("Verifier", "deterministic", (time.perf_counter() - t1) * 1000)
         errs = [c for c in checks if not c.passed and c.severity == "error"]
         failed = [c.rule_id for c in errs]
         if not errs:
@@ -85,7 +121,10 @@ def design_with_verification(inp: BeamInput, max_iter: int = config.MAX_REVISER_
             its.append(Iteration(iteration=i, b=cur.b_mm, D=cur.D_mm, failed=failed,
                                  action=f"Reached the limit of {max_iter} revisions"))
             return cur, des, checks, its, "needs_engineer"
+        t0 = time.perf_counter()
         new, desc = revise(cur)
+        if tr is not None:
+            tr.add("Reviser", "deterministic", (time.perf_counter() - t0) * 1000)
         its.append(Iteration(iteration=i, b=cur.b_mm, D=cur.D_mm, failed=failed, action=desc))
         if new is None:
             return cur, des, checks, its, "needs_engineer"
@@ -106,6 +145,7 @@ class Pipeline:
     def __init__(self, llm: LLM | None, audit: AuditLog | None = None):
         self.llm = llm
         self.audit = audit
+        self.tr = Tracer()  # one Pipeline serves one request (see with_model), reset at the start of each run
 
     def with_model(self, model: str | None) -> "Pipeline":
         """A pipeline for one request whose model calls try `model` first (no effect without a model client)."""
@@ -114,8 +154,14 @@ class Pipeline:
 
     # -- helpers
     def _finish(self, res: RunResult, record_extra: dict | None = None) -> RunResult:
+        tr = self.tr
         if self.llm is not None and getattr(self.llm, "last_model", None):
             res.llm_model = self.llm.last_model
+        res.llm_attempts = [LLMAttempt(**a) for a in (getattr(self.llm, "attempts", None) or [])]
+        if tr is not None:
+            if self.audit:
+                tr.add("Audit", "deterministic", None)  # its own write cannot be timed inside the record it stores
+            res.trace = tr.steps
         if self.audit:
             summary = res.message or res.status
             if res.final_input:
@@ -133,7 +179,10 @@ class Pipeline:
     # -- structured mode (no LLM needed)
     def run_structured(self, raw: RawIntake) -> RunResult:
         run_id = uuid.uuid4().hex[:12]
+        self.tr = Tracer()
+        t0 = time.perf_counter()
         out = normalise(raw)
+        self.tr.add("Guardrails", "deterministic", (time.perf_counter() - t0) * 1000)
         return self._from_normalised(run_id, "structured", out, [], {"raw_input": raw.model_dump()})
 
     def _from_normalised(self, run_id: str, mode: str, out: NormaliseOutcome, events: list[dict],
@@ -157,15 +206,19 @@ class Pipeline:
     # -- design + report
     def _design(self, run_id: str, mode: str, beam: BeamInput, conversions: list[str], events: list[dict],
                 extra: dict) -> RunResult:
-        final, des, checks, its, status = design_with_verification(beam)
+        final, des, checks, its, status = design_with_verification(beam, tr=self.tr)
         history = _history_lines(its)
         rd = build_report_data(final, des, checks, status, history, conversions)
         llm = self._writer_llm()
+        t0 = time.perf_counter()
         if llm is not None:
             narrative, source, wev = write_report(llm, rd, config.MAX_WRITER_ATTEMPTS)
             events = events + wev
+            self.tr.add("Narrative", "llm" if source == "llm" else "deterministic",
+                        (time.perf_counter() - t0) * 1000, "ok" if source == "llm" else "fallback")
         else:
             narrative, source = template_narrative(rd), "template"
+            self.tr.add("Narrative", "deterministic", (time.perf_counter() - t0) * 1000, "fallback")
             events = events + [{"type": "writer_skipped", "detail": "No LLM configured; deterministic template used"}]
         msg = ("Draft design produced; all error-level checks pass." if status == "designed"
                else "No passing design found automatically; this beam needs an engineer.")
@@ -180,6 +233,8 @@ class Pipeline:
     def run_chat(self, messages: list[dict], attachment: str = "", images: list[dict] | None = None) -> RunResult:
         images = images or []
         run_id = uuid.uuid4().hex[:12]
+        self.tr = Tracer()
+        t_g = time.perf_counter()
         events: list[dict] = []
         user_text = "\n".join(m["text"] for m in messages if m.get("role") == "user")
         # the audit log keeps only redacted text; the attachment is never stored, only its length
@@ -225,9 +280,13 @@ class Pipeline:
         if n_red:
             events.append({"type": "pii_redacted", "count": n_red})
 
+        self.tr.add("Guardrails", "deterministic", (time.perf_counter() - t_g) * 1000)
+        t0 = time.perf_counter()
         try:
             intake = run_intake(self.llm, "\n".join(transcript), att, images)
+            self.tr.add("Brief", "llm", (time.perf_counter() - t0) * 1000)
         except LLMError as e:
+            self.tr.add("Brief", "llm", (time.perf_counter() - t0) * 1000, "error")
             events.append({"type": "intake_llm_error", "detail": str(e)[:300]})
             return self._finish(RunResult(run_id=run_id, status="error", mode="chat", guardrail_events=events,
                                           message=f"The language model could not be reached or returned unusable output ({str(e)[:160]})."), extra)
@@ -248,6 +307,7 @@ class Pipeline:
                                           out_of_scope=[why], message=f"Not supported: {why}. Supported: singly reinforced rectangular beams, simply supported or cantilever, UDL, IS 456:2000."), extra)
 
         # 4. grounding: every extracted number must appear in what the user/attachment wrote
+        t_g = time.perf_counter()
         raw = intake.fields
         grounded_pool = numbers_in(user_text) | numbers_in(attachment) | numbers_in(image_text)
         ungrounded = []
@@ -277,6 +337,7 @@ class Pipeline:
                                           missing=["dead_load", "live_load"], guardrail_events=events), extra)
 
         out = normalise(raw)
+        self.tr.add("Guardrails", "deterministic", (time.perf_counter() - t_g) * 1000)
         res = self._from_normalised(run_id, "chat", out, events, extra)
         if image_text:
             res.image_text = image_text

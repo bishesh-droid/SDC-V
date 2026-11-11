@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from .is456.tables import CODE_EDITION
+from .is456.tables import CODE_EDITION, EPS_CU
 
 Exposure = Literal["mild", "moderate", "severe", "very_severe", "extreme"]
 Support = Literal["simply_supported", "cantilever"]
@@ -110,4 +110,5 @@ class Design(BaseModel):
     min_clear_spacing: float
     max_clear_spacing: float
     hanger_dia: int = 12
+    eps_cu: float = EPS_CU  # presentation constant (IS 456 Cl. 38.1), never used in a calculation
     assumptions: list[str] = Field(default_factory=list)

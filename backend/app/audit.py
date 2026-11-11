@@ -36,6 +36,14 @@ class AuditLog:
         c.row_factory = sqlite3.Row
         return c
 
+    def ping(self) -> bool:
+        try:
+            with self._conn() as c:
+                c.execute("SELECT 1").fetchone()
+            return True
+        except sqlite3.Error:
+            return False
+
     def save(self, run_id: str, status: str, mode: str, summary: str, record: dict) -> None:
         with self._lock, self._conn() as c:
             c.execute("INSERT OR REPLACE INTO runs (id, created_at, status, mode, summary, record) VALUES (?,?,?,?,?,?)",

@@ -6,6 +6,7 @@ import math
 CODE_EDITION = "IS456:2000"
 ES = 2.0e5  # N/mm2
 
+EPS_CU = 0.0035         # limiting concrete strain in flexure (Cl. 38.1); shown in the UI strain diagram, not used by the calculator
 GAMMA_RC = 25.0          # kN/m3, unit weight of reinforced concrete (Cl. 19.2.1)
 LOAD_FACTOR = 1.5        # Table 18, DL + LL combination
 STIRRUP_DIA = 8          # mm, design assumption
