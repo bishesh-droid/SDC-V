@@ -277,6 +277,13 @@ Read by the backend (`backend/app/config.py`):
 - `RATE_LIMIT_PER_MIN` — Requests per minute per client and per route for `POST /api/chat`, `/api/design` and `/api/explore`. Default: 30. A value of 0 disables the limit.
 - `SDCV_DATA_DIR` — Directory for `audit.db`. Default: `backend/data`. Used to point tests or experiments at a throwaway database.
 
+Optional local-model settings (all unset by default, which leaves Gemini reading briefs and images). See `training/README.md`:
+
+- `SDCV_INTAKE_BACKEND` — `gemini` (default) or `local`. `local` uses a fine-tuned Qwen for intake.
+- `SDCV_LOCAL_MODEL`, `SDCV_LOCAL_ADAPTER`, `SDCV_LOCAL_4BIT` — the base model, its LoRA adapter folder, and 4-bit loading.
+- `SDCV_VISION_BACKEND` — `gemini`, `local` or empty. When set, an attached image is first transcribed to text by that model, then read by the intake model. Defaults to `gemini` when intake is `local`.
+- `SDCV_VISION_MODEL` — the local vision model (default `Qwen/Qwen2.5-VL-3B-Instruct`).
+
 Read by the Node server (`frontend/server.mjs`):
 
 - `PORT` — Listening port. Default: 3000.

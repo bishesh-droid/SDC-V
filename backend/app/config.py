@@ -77,5 +77,38 @@ def rate_limit_per_min() -> int:
     return int(_float("RATE_LIMIT_PER_MIN", 30))
 
 
+# ---- local models (all optional; the defaults leave the application exactly as it was: Gemini reads briefs and images)
+def intake_backend() -> str:
+    """Who reads a brief and returns the fields: "gemini" (default) or "local" (fine-tuned Qwen, see training/)."""
+    v = os.environ.get("SDCV_INTAKE_BACKEND", "gemini").strip().lower()
+    return v if v in ("gemini", "local") else "gemini"
+
+
+def local_model() -> str:
+    return os.environ.get("SDCV_LOCAL_MODEL", "Qwen/Qwen2.5-3B-Instruct").strip()
+
+
+def local_adapter() -> str | None:
+    return os.environ.get("SDCV_LOCAL_ADAPTER", "").strip() or None
+
+
+def local_4bit() -> bool:
+    return os.environ.get("SDCV_LOCAL_4BIT", "").strip().lower() in ("1", "true", "yes")
+
+
+def vision_backend() -> str:
+    """Who transcribes snapshots into text before intake: "" (nobody: images go straight to the intake model), "gemini" or "local".
+
+    A local intake model cannot see images, so when it is selected and this is unset, snapshots go to Gemini for transcription."""
+    v = os.environ.get("SDCV_VISION_BACKEND", "").strip().lower()
+    if v in ("gemini", "local"):
+        return v
+    return "gemini" if intake_backend() == "local" else ""
+
+
+def vision_model() -> str:
+    return os.environ.get("SDCV_VISION_MODEL", "Qwen/Qwen2.5-VL-3B-Instruct").strip()
+
+
 MAX_REVISER_ITERATIONS = 8
 MAX_WRITER_ATTEMPTS = 3  # first try + 2 regenerations, then fallback template

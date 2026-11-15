@@ -517,3 +517,12 @@ dialog.viewer::backdrop{background:var(--scrim)}
 .vw-cap:empty{display:none}
 @media (max-width:820px){.vw-top{flex-wrap:wrap;gap:var(--s2)}.vw-top h2{order:2;flex-basis:100%}.vw-tools{margin-left:auto}.vw-stage{padding:10px}}
 @media print{dialog.viewer,.zoom-btn{display:none!important}}
+
+/* Test cases view */
+.tc-bar{display:flex;flex-wrap:wrap;gap:var(--s2);align-items:center;margin-bottom:var(--s3)}
+.tc-json{margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:.78rem;max-height:220px;overflow:auto}
+.tc-exp{margin:0;padding-left:1.1em} .tc-exp li{font-family:var(--mono);font-size:.8rem}
+.tc-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.tc-checks li{display:flex;gap:8px;align-items:flex-start;font-size:.86rem}
+.tc-checks li.ok .ic{color:var(--pass)} .tc-checks li.bad .ic{color:var(--fail)}
+.tc-checks small{color:var(--text-muted);display:block}

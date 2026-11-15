@@ -23,7 +23,7 @@ function initTheme() {
 
 /* ------------------------------------------------------------------ views and router */
 export const NAV = [["home", "Home", "home"], ["chat", "Assistant", "chat"], ["design", "Form design", "form"], ["explore", "Explore sections", "explore"],
-  ["kb", "Knowledge base", "kb"], ["system", "Expert system", "system"], ["history", "History", "history"], ["scope", "Scope & status", "scope"]];
+  ["kb", "Knowledge base", "kb"], ["system", "Expert system", "system"], ["history", "History", "history"], ["tests", "Test cases", "rules"], ["scope", "Scope & status", "scope"]];
 const registry = {};
 export const registerView = (id, v) => { registry[id] = v; };
 let currentView = null;

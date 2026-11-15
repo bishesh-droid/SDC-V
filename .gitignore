@@ -55,3 +55,11 @@ benchmark/*_results.*
 
 # Local planning notes
 LLM_addition.md
+
+# Local-model training: generated data, checkpoints and adapters (regenerate with training/make_intake_dataset.py)
+training/data/
+training/outputs/
+
+# Downloaded adapter archives and per-case benchmark outputs
+*.zip
+benchmark/intake_compare_*.json

@@ -86,7 +86,8 @@ _EXPOSURE_ALIASES = {
 }
 _SUPPORT_ALIASES = {
     "simply_supported": "simply_supported", "simply supported": "simply_supported", "ss": "simply_supported",
-    "simple": "simply_supported", "cantilever": "cantilever",
+    "simple": "simply_supported", "simple span": "simply_supported", "simply supported beam": "simply_supported",
+    "simple beam": "simply_supported", "cantilever": "cantilever",
 }
 
 

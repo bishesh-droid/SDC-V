@@ -9,6 +9,7 @@ import "./explore.js";
 import "./kb.js";
 import "./system.js";
 import "./history.js";
+import "./tests.js";
 import "./scope.js";
 import { initViewer } from "./viewer.js";
 

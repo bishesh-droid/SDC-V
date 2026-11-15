@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import time
 import uuid
 from typing import Literal
@@ -17,6 +18,7 @@ from .is456 import tables as T
 from .is456.calculator import design_beam
 from .llm.gemini import LLM, LLMError
 from .llm.intake import run_intake
+from .llm.vision import LLMTranscriber
 from .llm.writer import write_report
 from .report import STAMP, ReportData, build_report_data, template_narrative
 from .reviser import revise
@@ -141,23 +143,70 @@ def _history_lines(its: list[Iteration]) -> list[str]:
 
 
 # ----------------------------------------------------------------- pipeline
+
+_MISSING_WORDS = re.compile(r"missing|detail|insufficient|incomplete|not (?:specified|provided|stated|enough)|no (?:span|info|data|dimension|value|number)|unspecified|unclear|vague", re.I)
+
+
+def _is_missing_info_refusal(reason: str | None, brief: str) -> bool:
+    """True when an out_of_scope / not_a_beam_brief verdict looks like "information is missing" rather than a real unsupported feature.
+
+    Conditions: the text talks about a beam, and the model either gave no reason or a reason that only says details are missing.
+    A reason naming a feature (T-beam, slab, Eurocode...) is never overridden."""
+    if not re.search(r"\bbeams?\b|\bRCC\b|\bcantilever\b", brief, re.I):
+        return False
+    return not (reason or "").strip() or bool(_MISSING_WORDS.search(reason or ""))
+
 class Pipeline:
-    def __init__(self, llm: LLM | None, audit: AuditLog | None = None):
+    """llm is the Gemini-style client (narrative, and intake unless intake_llm is given).
+
+    intake_llm   optional local text model that reads briefs instead of `llm` (fine-tuned Qwen, see training/)
+    vision_mode  "gemini" or "local": snapshots are first transcribed to text by that model, then read by the intake model.
+                 None keeps the single-stage behaviour: images go straight to the intake model.
+    vision_llm   the local vision model when vision_mode is "local"
+    """
+    def __init__(self, llm: LLM | None, audit: AuditLog | None = None, *, intake_llm: LLM | None = None,
+                 vision_mode: str | None = None, vision_llm: LLM | None = None):
         self.llm = llm
         self.audit = audit
+        self.intake_llm, self.vision_mode, self.vision_llm = intake_llm, vision_mode, vision_llm
         self.tr = Tracer()  # one Pipeline serves one request (see with_model), reset at the start of each run
+        self._mark: dict[int, int] = {}
 
     def with_model(self, model: str | None) -> "Pipeline":
         """A pipeline for one request whose model calls try `model` first (no effect without a model client)."""
         pick = getattr(self.llm, "for_model", None)
-        return Pipeline(pick(model) if pick else self.llm, self.audit)
+        return Pipeline(pick(model) if pick else self.llm, self.audit, intake_llm=self.intake_llm,
+                        vision_mode=self.vision_mode, vision_llm=self.vision_llm)
+
+    def _llms(self) -> list:
+        seen, out = set(), []
+        for m in (self.intake_llm, self.vision_llm, self.llm):   # intake first, narrative last: attempts read in pipeline order
+            if m is not None and id(m) not in seen:
+                seen.add(id(m)); out.append(m)
+        return out
+
+    def _start(self) -> None:
+        """Called at the start of a run. Local models are shared between requests, so remember where their attempt lists were."""
+        self.tr = Tracer()
+        self._mark = {id(m): len(getattr(m, "attempts", None) or []) for m in self._llms()}
+
+    def _intake_model(self):
+        return self.intake_llm if self.intake_llm is not None else self.llm
+
+    def _transcriber(self) -> LLMTranscriber | None:
+        if self.vision_mode == "local" and self.vision_llm is not None:
+            return LLMTranscriber(self.vision_llm)
+        if self.vision_mode == "gemini" and self.llm is not None:
+            return LLMTranscriber(self.llm)
+        return None
 
     # -- helpers
     def _finish(self, res: RunResult, record_extra: dict | None = None) -> RunResult:
         tr = self.tr
-        if self.llm is not None and getattr(self.llm, "last_model", None):
-            res.llm_model = self.llm.last_model
-        res.llm_attempts = [LLMAttempt(**a) for a in (getattr(self.llm, "attempts", None) or [])]
+        used = [m for m in self._llms() if getattr(m, "last_model", None) and len(getattr(m, "attempts", None) or []) > self._mark.get(id(m), 0)]
+        if used:
+            res.llm_model = ", ".join(dict.fromkeys(m.last_model for m in used))
+        res.llm_attempts = [LLMAttempt(**a) for m in self._llms() for a in (getattr(m, "attempts", None) or [])[self._mark.get(id(m), 0):]]
         if tr is not None:
             if self.audit:
                 tr.add("Audit", "deterministic", None)  # its own write cannot be timed inside the record it stores
@@ -179,7 +228,7 @@ class Pipeline:
     # -- structured mode (no LLM needed)
     def run_structured(self, raw: RawIntake) -> RunResult:
         run_id = uuid.uuid4().hex[:12]
-        self.tr = Tracer()
+        self._start()
         t0 = time.perf_counter()
         out = normalise(raw)
         self.tr.add("Guardrails", "deterministic", (time.perf_counter() - t0) * 1000)
@@ -233,7 +282,7 @@ class Pipeline:
     def run_chat(self, messages: list[dict], attachment: str = "", images: list[dict] | None = None) -> RunResult:
         images = images or []
         run_id = uuid.uuid4().hex[:12]
-        self.tr = Tracer()
+        self._start()
         t_g = time.perf_counter()
         events: list[dict] = []
         user_text = "\n".join(m["text"] for m in messages if m.get("role") == "user")
@@ -262,11 +311,15 @@ class Pipeline:
             if hits:
                 events.append({"type": "injection_suspected", "where": label, "patterns": hits})
 
-        if self.llm is None or not getattr(self.llm, "available", True):
+        intake_llm = self._intake_model()
+        if intake_llm is None or not getattr(intake_llm, "available", True):
+            local = self.intake_llm is not None
             return self._finish(RunResult(
                 run_id=run_id, status="error", mode="chat", guardrail_events=events,
-                message="The Gemini API key is not configured, so natural-language intake is unavailable. "
-                        "Set GEMINI_API_KEY in backend/.env or use the structured form."), extra)
+                message=("The local intake model is not available. Install torch and transformers (and peft for an adapter), "
+                         "or set SDCV_INTAKE_BACKEND=gemini." if local else
+                         "The Gemini API key is not configured, so natural-language intake is unavailable. "
+                         "Set GEMINI_API_KEY in backend/.env or use the structured form.")), extra)
 
         # 3. redact PII before leaving the machine
         transcript = []
@@ -281,9 +334,26 @@ class Pipeline:
             events.append({"type": "pii_redacted", "count": n_red})
 
         self.tr.add("Guardrails", "deterministic", (time.perf_counter() - t_g) * 1000)
+
+        # 3b. snapshots (two-stage mode): a vision model copies what it can read into text; the intake model then reads that text
+        snap_text, reader = "", self._transcriber() if images else None
+        if reader is not None:
+            t0 = time.perf_counter()
+            try:
+                snap_text, k = redact(reader.transcribe(images))
+                self.tr.add("Snapshot", "llm", (time.perf_counter() - t0) * 1000)
+                events.append({"type": "snapshot_transcribed", "chars": len(snap_text), "model": reader.name})
+                if k:
+                    events.append({"type": "pii_redacted", "count": k, "where": "snapshot"})
+            except LLMError as e:
+                self.tr.add("Snapshot", "llm", (time.perf_counter() - t0) * 1000, "error")
+                events.append({"type": "snapshot_llm_error", "detail": str(e)[:300]})
+                return self._finish(RunResult(run_id=run_id, status="error", mode="chat", guardrail_events=events,
+                                              message=f"The snapshot could not be read ({str(e)[:160]}). Describe the beam in words, or try again."), extra)
+
         t0 = time.perf_counter()
         try:
-            intake = run_intake(self.llm, "\n".join(transcript), att, images)
+            intake = run_intake(intake_llm, "\n".join(transcript), att, None if reader is not None else images, image_text=snap_text)
             self.tr.add("Brief", "llm", (time.perf_counter() - t0) * 1000)
         except LLMError as e:
             self.tr.add("Brief", "llm", (time.perf_counter() - t0) * 1000, "error")
@@ -301,6 +371,11 @@ class Pipeline:
         if intake.intent == "unsafe_request":
             return self._finish(RunResult(run_id=run_id, status="refused", mode="chat", guardrail_events=events,
                                           message="I can't help with that request. This tool only drafts designs for engineer review."), extra)
+        if intake.intent in ("out_of_scope", "not_a_beam_brief") and _is_missing_info_refusal(intake.out_of_scope_reason, "\n".join(transcript)):
+            # A model must not answer "not supported" because values are missing: the rule-based scope screen above already found
+            # no unsupported feature, so ask for the details instead.
+            events.append({"type": "intake_intent_overridden", "detail": f"model said {intake.intent} ({intake.out_of_scope_reason!r}) but the brief is a beam request with no unsupported feature"})
+            intake.intent = "design"
         if intake.intent in ("out_of_scope", "not_a_beam_brief"):
             why = intake.out_of_scope_reason or "this is not a supported beam design brief"
             return self._finish(RunResult(run_id=run_id, status="out_of_scope", mode="chat", guardrail_events=events,

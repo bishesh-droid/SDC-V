@@ -19,6 +19,7 @@ from .guardrails.input import RawIntake
 from .is456 import tables as T
 from .kb import kb_payload
 from .system_model import system_payload
+from .llm.factory import build_local
 from .llm.gemini import GeminiClient
 from .pipeline import Pipeline, RunResult, tool_versions
 from .scope import scope
@@ -31,7 +32,7 @@ log = logging.getLogger("sdcv.http")
 app = FastAPI(title="SDC-V: Structural Design Copilot with Deterministic Verifier", version=config.APP_VERSION)
 audit = AuditLog()
 llm = GeminiClient()
-pipeline = Pipeline(llm, audit)
+pipeline = Pipeline(llm, audit, **build_local())   # no SDCV_* model settings: identical to Pipeline(llm, audit)
 limiter = RateLimiter()
 
 LIMITED = {"/api/chat", "/api/design", "/api/explore"}
@@ -118,7 +119,9 @@ def _deep_status(model: str | None = None) -> dict:
 
 @app.get("/api/health")
 def health(deep: bool = False, model: str | None = Query(None, pattern=MODEL_PATTERN)):
-    out = {"ok": True, "llm_configured": llm.available, "models": llm.models, "model_options": config.MODEL_OPTIONS, "default_model": config.DEFAULT_MODEL,
+    local_intake = pipeline.intake_llm is not None
+    out = {"ok": True, "llm_configured": llm.available or (local_intake and pipeline.intake_llm.available),
+           "intake_backend": config.intake_backend(), "vision_backend": pipeline.vision_mode or "none", "models": llm.models, "model_options": config.MODEL_OPTIONS, "default_model": config.DEFAULT_MODEL,
            "code_edition": T.CODE_EDITION,
            "auth_required": bool(config.api_token()), "rate_limit_per_min": config.rate_limit_per_min(),
            "versions": tool_versions(), "db_ok": audit.ping()}
@@ -230,6 +233,8 @@ if config.FRONTEND_DIR.exists():
         "system.js",
         "history.js",
         "scope.js",
+        "tests.js",
+        "testcases.js",
         "viewer.js",
         "fixture.js",
         "kbcharts.js",
