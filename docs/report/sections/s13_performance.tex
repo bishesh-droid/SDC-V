@@ -1,0 +1,23 @@
+\chapter{Performance considerations}\label{ch:perf}
+
+\section{Where time is spent}
+Model latency, not computation, dominates the duration of a request. A chat design makes one intake call and at least one narrative call, and up to three narrative calls when the number trace rejects a draft. The calculator and the verifier are pure computation. On the development machine used for this report (Python 3.14.8), 200 runs of \code{design_with_verification} on the section of Example~A in Appendix~\ref{app:example} took on average 0.23~ms per run, and ten calls of the 51-section explorer took on average 13.8~ms per call. These figures are single-machine measurements made for this report and are not guarantees.
+
+\section{Time bounds}
+\begin{itemize}
+  \item Each model call times out at \code{LLM_TIMEOUT_S} (default 25~s). Each \code{generate()} call, across all models and retries, is limited to \code{LLM_BUDGET_S} (default 60~s). A request that makes several model calls can take longer than one budget.
+  \item A model that times out is skipped, not retried; a model that returns 429, 500 or 503 gets one retry after a pause of at most 2 seconds.
+  \item The Node proxy times out an upstream request after 300 seconds.
+  \item The deep health check uses a budget of at most 20 seconds.
+\end{itemize}
+
+\section{Caching}
+The live model check is cached for 60 seconds per model so that polling cannot spend quota. Frontend files are served with \code{Cache-Control: no-cache} and API responses with \code{no-store}. There is no result cache: identical designs are recomputed and logged again.
+
+\section{Scalability notes}
+\begin{itemize}
+  \item The explorer evaluates up to 51 sections in one request with no model call.
+  \item \code{GET /api/stats} uses \code{json_extract} over every row, so its cost grows linearly with the size of the log.
+  \item The CSV export is capped at 5000 rows and the history list is paged (limit at most 200).
+  \item The system is single process and single host (Chapter~\ref{ch:deploy}); a shared database would need a different \code{AuditLog} implementation.
+\end{itemize}

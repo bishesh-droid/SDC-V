@@ -63,3 +63,15 @@ training/outputs/
 # Downloaded adapter archives and per-case benchmark outputs
 *.zip
 benchmark/intake_compare_*.json
+
+# LaTeX build artifacts for docs/report (sources and main.pdf stay tracked)
+docs/report/*.aux
+docs/report/*.bbl
+docs/report/*.blg
+docs/report/*.fdb_latexmk
+docs/report/*.fls
+docs/report/*.lof
+docs/report/*.lot
+docs/report/*.out
+docs/report/*.toc
+docs/report/*.synctex.gz

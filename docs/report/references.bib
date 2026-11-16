@@ -1,0 +1,38 @@
+@manual{is456,
+  author       = {{Bureau of Indian Standards}},
+  title        = {{IS} 456:2000, Plain and Reinforced Concrete -- Code of Practice},
+  year         = {2000},
+  organization = {Bureau of Indian Standards},
+  address      = {New Delhi},
+  note         = {Code edition implemented by SDC-V (\texttt{CODE\_EDITION} = ``IS456:2000'')}
+}
+
+@misc{fastapi,
+  author = {{FastAPI project}},
+  title  = {{FastAPI}: Python web framework},
+  note   = {Listed in \texttt{backend/requirements.txt} (\texttt{fastapi>=0.110})}
+}
+
+@misc{uvicorn,
+  author = {{Uvicorn project}},
+  title  = {{Uvicorn}: ASGI server},
+  note   = {Listed in \texttt{backend/requirements.txt} (\texttt{uvicorn>=0.29})}
+}
+
+@misc{pydantic,
+  author = {{Pydantic project}},
+  title  = {{Pydantic}: data validation for Python},
+  note   = {Listed in \texttt{backend/requirements.txt} (\texttt{pydantic>=2.6}); version 2.13 reported in the project documentation}
+}
+
+@misc{sqlite,
+  author = {{SQLite project}},
+  title  = {{SQLite}: embedded SQL database engine},
+  note   = {Accessed through the Python standard-library \texttt{sqlite3} module; JSON functions (\texttt{json\_extract}) used for statistics}
+}
+
+@misc{gemini,
+  author = {{Google}},
+  title  = {{Gemini} {API}, \texttt{generateContent} REST endpoint},
+  note   = {Endpoint used by SDC-V: \url{https://generativelanguage.googleapis.com/v1beta/models/}, method \texttt{generateContent}}
+}

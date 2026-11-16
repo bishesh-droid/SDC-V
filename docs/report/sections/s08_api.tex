@@ -1,0 +1,64 @@
+\chapter{API reference}\label{ch:api}
+
+All routes are on one origin. Domain outcomes (declined, rejected, needs more information, model unavailable) are returned with HTTP 200 and a \code{status} field; HTTP error codes are reserved for transport, validation and authorisation problems. Responses under \code{/api/} carry \code{Cache-Control: no-store} and the security headers.
+
+\begin{longtable}{@{}l L{4.0cm} L{6.1cm} L{2.0cm}@{}}
+\caption{HTTP routes of the backend. ``Token'' means the route requires \code{SDCV_API_TOKEN} when that variable is set; ``Limited'' means it is also subject to the per-client, per-route rate limit.}\label{tab:api}\\
+\toprule Method & Path & Purpose & Auth \\ \midrule \endfirsthead
+\toprule Method & Path & Purpose & Auth \\ \midrule \endhead
+\bottomrule \endlastfoot
+GET & \code{/api/health} & Versions, key presence, database reachability, model options; with \code{deep=true} a live model check cached for 60 s & none \\
+GET & \code{/api/rules} & The 19 verifier rules with clause, severity and revisable flag & token \\
+GET & \code{/api/scope} & Supported scope, limits, declined and refused classes, fixed assumptions & token \\
+GET & \code{/api/kb} & Knowledge base: topics and entries & token \\
+GET & \code{/api/system} & Expert-system model generated from the running code & token \\
+POST & \code{/api/design} & Structured design; optional \code{model} query parameter & token, limited \\
+POST & \code{/api/chat} & Natural-language design with optional attachment and up to three images & token, limited \\
+POST & \code{/api/explore} & Scan neighbouring sections; no model call, no audit write & token, limited \\
+GET & \code{/api/runs} & Filtered, paged run list; \code{X-Total-Count} header & token \\
+GET & \code{/api/runs.csv} & CSV export of the filtered list (up to 5000 rows) & token \\
+GET & \code{/api/stats} & Counts by status, mode, model and narrative source & token \\
+GET & \code{/api/runs/{run_id}} & One stored run & token \\
+GET & \code{/api/runs/{run_id}/report.md} & Markdown report built from the stored result & token \\
+POST & \code{/api/runs/{run_id}/review} & Record a reviewer name and note (a log entry, not a certification) & token \\
+GET & \code{/} & The interface \code{index.html} & none \\
+GET & \code{/static/{name}} & One file of an explicit allowlist (single path segment) & none \\
+\end{longtable}
+
+\section{Common errors}
+\begin{itemize}
+  \item \textbf{401} \code{{"detail": "missing or invalid API token"}} with \code{WWW-Authenticate: Bearer}, when a token is configured and missing or wrong. The token may be sent as \code{Authorization: Bearer <token>} or \code{X-API-Key: <token>}. It is compared in constant time and is not applied to \code{/api/health}, \code{/} or \code{/static/*}.
+  \item \textbf{422} Pydantic validation error for a malformed body or query parameter, for example a \code{model} value that is not one of the configured models or an out-of-range \code{limit}.
+  \item \textbf{429} \code{{"detail": "rate limit exceeded; retry in <n>s"}} with \code{Retry-After}, for \code{POST /api/chat}, \code{/api/design} and \code{/api/explore}.
+  \item \textbf{404} \code{{"detail": "run not found"}} for the run routes with an unknown identifier, and \code{{"detail": "not found"}} for a static name that is not on the allowlist.
+\end{itemize}
+
+\section{Result statuses}
+\begin{description}[leftmargin=3.2cm,style=nextline]
+  \item[\code{designed}] All error-level rules pass (the section may have been revised).
+  \item[\code{needs_engineer}] A non-revisable error rule failed, the reviser reached its limit, or the section reached its size limits.
+  \item[\code{needs_info}] Required fields are missing; \code{question} and \code{missing} are set.
+  \item[\code{rejected}] Input failed unit or range validation; \code{errors} lists the reasons.
+  \item[\code{out_of_scope}] A feature outside the supported scope was detected.
+  \item[\code{refused}] An unsafe request was detected.
+  \item[\code{error}] Natural-language intake could not run (no key) or the model could not be reached or returned unusable output.
+\end{description}
+
+\section{Request and response bodies}
+\paragraph{\code{POST /api/design}.} The body is a \code{RawIntake}: \code{span}, \code{b}, \code{D}, \code{cover}, \code{dead_load}, \code{live_load} as \code{{"value": number, "unit": string}}; \code{support} as a string; \code{fck} and \code{fy} as a number or a string such as ``M25''; \code{exposure} as a string. Missing fields produce \code{needs_info}. The response is a \code{RunResult} with \code{run_id}, \code{status}, \code{mode}, \code{message}, \code{question}, \code{missing}, \code{errors}, \code{out_of_scope}, \code{conversions}, \code{original_input}, \code{final_input}, \code{design}, \code{checks}, \code{iterations}, \code{report}, \code{narrative}, \code{narrative_source} (\code{llm} or \code{template}), \code{image_text}, \code{sketch_svg}, \code{guardrail_events}, \code{llm_model}, \code{stamp}, \code{trace} and \code{llm_attempts}.
+\paragraph{\code{POST /api/chat}.} The body has \code{messages} (1 to 20 items, each with a \code{role} of \code{user} or \code{assistant} and \code{text} of at most 8000 characters), \code{attachment_text} (at most 20\,000 characters, treated as data) and \code{images} (at most 3; each with a \code{mime} of \code{image/png}, \code{image/jpeg} or \code{image/webp} and base64 \code{data} of at most 5\,000\,000 characters whose leading bytes must match the declared type). The response is a \code{RunResult} with \code{mode} \code{chat}. A missing key or an unreachable model is returned as HTTP 200 with status \code{error}.
+\paragraph{\code{POST /api/explore}.} The body is the same as for \code{/api/design}. The response has \code{status} (\code{ok}, \code{needs_info}, \code{rejected}, \code{out_of_scope}), \code{base}, \code{rows} (at most 51 candidate sections), \code{lightest_passing}, \code{passing}, \code{scanned}, \code{conversions} and \code{note}.
+\paragraph{\code{GET /api/runs}.} Query parameters: \code{limit} (1 to 200, default 50), \code{offset}, \code{status}, \code{mode} (\code{chat} or \code{structured}), \code{q} (up to 80 characters, matched against run identifier, summary and reviewer) and \code{reviewed}. The CSV export takes the same filters without paging. Cells that start with \code{=}, \code{+}, \code{-} or \code{@} are prefixed with an apostrophe to neutralise spreadsheet formulas.
+\paragraph{\code{POST /api/runs/{run_id}/review}.} The body has \code{reviewer} (2 to 120 characters) and an optional \code{note} (at most 2000 characters). The response is \code{{"ok": true}}.
+\paragraph{\code{GET /api/health}.} The response includes \code{ok}, \code{llm_configured}, \code{intake_backend}, \code{vision_backend}, \code{models}, \code{model_options}, \code{default_model}, \code{code_edition}, \code{auth_required}, \code{rate_limit_per_min}, \code{versions} and \code{db_ok}.
+
+\section{Usage example}
+\begin{lstlisting}[language=bash]
+curl -s -X POST http://127.0.0.1:8000/api/design \
+  -H 'Content-Type: application/json' \
+  -d '{"span":{"value":6,"unit":"m"},"support":"simply_supported",
+       "b":{"value":300,"unit":"mm"},"D":{"value":550,"unit":"mm"},
+       "cover":{"value":30,"unit":"mm"},"fck":25,"fy":500,
+       "dead_load":{"value":15,"unit":"kN/m"},
+       "live_load":{"value":12,"unit":"kN/m"},"exposure":"moderate"}'
+\end{lstlisting}

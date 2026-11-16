@@ -1,0 +1,28 @@
+% Number-trace output guardrail (write_report + trace_numbers).
+{\hyphenpenalty=10000\exhyphenpenalty=10000
+\begin{tikzpicture}[x=1cm,y=1cm,
+  dec/.style={det,diamond,aspect=3.0,inner sep=0pt,text width=3.9cm,font=\scriptsize}]
+  \node[det,text width=4.9cm] (rd) at (7.6,0) {\texttt{ReportData}: pre-formatted strings of the verified result};
+  \node[llm,text width=4.6cm] (gen) at (0,0) {model writes the narrative (attempt $k$ of 3)};
+  \node[det,text width=4.9cm] (allow) at (7.6,-2.3) {allowed set $A$: every number in every string of \texttt{ReportData}};
+  \node[det,text width=4.6cm] (ext) at (0,-2.3) {extract numbers $N$ from the text; ignore list markers; ``mm2'' is a unit};
+  \node[dec] (chk) at (0,-4.8) {number in $N$ not in $A$, or stamp missing?};
+  \node[det,text width=4.9cm,fill=detfill!55] (acc) at (7.6,-4.8) {accept: \texttt{narrative\_source} = llm};
+  \node[dec] (k) at (0,-7.2) {$k < 3$?};
+  \node[det,text width=4.9cm,fill=detfill!55] (tpl) at (7.6,-7.2) {\texttt{template\_narrative}, built only from \texttt{ReportData}; source = template};
+  \node[det,text width=4.6cm] (re) at (0,-9.4) {re-prompt with the rejected numbers; $k \leftarrow k+1$};
+
+  \draw[flow] (rd) -- node[lbl,above] {prompt} (gen);
+  \draw[flow] (rd) -- (allow);
+  \draw[flow] (gen) -- (ext);
+  \draw[flow] (allow) -- node[lbl,above] {compare} (ext);
+  \draw[flow] (ext) -- (chk);
+  \draw[flow] (chk.east) -- node[lbl,above] {no} (acc.west);
+  \draw[flow] (chk) -- node[lbl,right] {yes} (k);
+  \draw[flow] (k.east) -- node[lbl,above] {no} (tpl.west);
+  \draw[flow] (k) -- node[lbl,right] {yes} (re);
+  \draw[flow] (re.west) -- ++(-1.0,0) |- (gen.west);
+\end{tikzpicture}}
+
+\vspace{4pt}
+{\small\detkey{} deterministic code \quad \llmkey{} model call. A model error at any call ends the attempts and selects the template.}

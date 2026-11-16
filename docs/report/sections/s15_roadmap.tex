@@ -1,0 +1,15 @@
+\chapter{Roadmap}\label{ch:road}
+
+The items below follow from the gaps visible in the current code and are proposals taken from the project documentation. None is implemented in version 0.2.0.
+\begin{enumerate}
+  \item Add a Dockerfile, a pinned dependency lock and a CI workflow that runs the backend tests and the guard benchmark.
+  \item Add committed end-to-end browser tests for the interface.
+  \item Add roles and per-user run ownership, with denied attempts written to the audit log, if the tool is to be used by more than one person.
+  \item Add a schema migration mechanism for the audit database, and an option for a shared database.
+  \item Strengthen the output guardrail from number-level to quantity-level checking, so that a real number attached to the wrong quantity is rejected.
+  \item Add a semantic guard layer behind the regular-expression screens that can only add refusals, and measure it with the existing benchmark metrics before enabling it.
+  \item Grow the guard benchmark with held-out cases and matched pairs so that its figures are not in-sample, and store benchmark runs with their configuration and rule fingerprint.
+  \item Replace the fitted $\tau_c$ and deflection factors with tabulated values checked against the standard.
+  \item Extend the scope only with new calculator functions, rules and tests together (for example flanged sections), keeping the declined-feature screens in step.
+  \item Add structured logging, log-level configuration and a metrics endpoint.
+\end{enumerate}

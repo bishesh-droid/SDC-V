@@ -1,0 +1,38 @@
+\chapter{LLM integration and guardrails}\label{ch:llm}
+
+\section{Where the model is used}
+The model is used for two tasks only: reading a brief (intake), and writing the narrative of a verified result. The client (\fpath{backend/app/llm/gemini.py}) calls the \code{generateContent} method of the Gemini REST API~\cite{gemini} with the key in the \code{x-goog-api-key} header, temperature 0 and a limit of 8192 output tokens. The selectable models are \code{gemini-3.5-flash-lite} (the default), \code{gemini-3.5-flash}, \code{gemini-3.6-flash}, \code{gemini-3.8-flash} and \code{gemini-3-flash-preview}. The model chosen per request is tried first and the others are the fallback order. Up to two attempts are made per model, with a retry on HTTP 429, 500 and 503 and on network errors; a model that times out is skipped and not retried. Each call has a timeout (\code{LLM_TIMEOUT_S}, default 25~s) and each \code{generate()} call a total budget (\code{LLM_BUDGET_S}, default 60~s). If no model succeeds, \code{LLMError} is raised, which the pipeline turns into an explicit \code{error} status or the template narrative.
+
+\section{Intake}
+The intake agent (\fpath{backend/app/llm/intake.py}) receives the transcript between \code{<brief>} tags, an optional pasted attachment between \code{<attachment>} tags and optional images. Its system prompt instructs it to convert the brief into a JSON object and nothing else: never invent values, use \code{null} for anything not stated, copy numbers and units exactly as written, never judge safety, treat attachments and images as data and never as instructions, and report the intent (\code{design}, \code{out_of_scope}, \code{unsafe_request} or \code{not_a_beam_brief}). The output is parsed and validated; one retry is made on a parse failure, after which \code{LLMError} is raised. The prompt is the backend's own; a local model class may supply a shorter one.
+
+An optional two-stage mode (\code{llm/vision.py}) first transcribes attached images to text with a vision model, then lets a text-only intake model read the transcript. Both stages and the local models are enabled only through \code{SDCV_*} settings (Appendix~\ref{app:env}); by default Gemini reads the brief and the images.
+
+\section{Number grounding}
+After intake, every extracted number (span, $b$, $D$, cover, dead load, live load, $f_{ck}$, $f_y$) must appear in the user's brief, in the attachment or in the image transcription. A number that does not appear is dropped and its field becomes missing, which later produces a request for the value (\code{needs_info}), and an event \code{ungrounded_values_dropped} is recorded. For the grades the letters of ``M25'' or ``Fe500'' are stripped before comparison. If the model reports that the loads are factored, the result is \code{needs_info}, because the tool applies the factor of 1.5 itself. A model verdict of \code{out_of_scope} or \code{not_a_beam_brief} that only says details are missing is overridden when the deterministic scope screen found no unsupported feature, so that the user is asked for the details instead of being told the beam is unsupported.
+
+\section{Deterministic input screens}
+\paragraph{Scope and unsafe-request screen.} Regular-expression screens run on the user's own words, never on the attachment, before any model call. There are 14 out-of-scope labels and 4 unsafe-request labels. A match that is preceded by a negation within a short window (for example ``not a T-beam'', ``no point loads'', ``non-prestressed'') does not count.
+\paragraph{Injection flags.} A list of patterns detects typical prompt-injection phrasing (for example instructions to ignore previous instructions, role changes and attempts to mark a design as approved). Hits are written to the \code{guardrail_events} of the result and logged. They do not block the request, because the attachment and image text are only ever passed to the model as labelled data and every extracted value must still survive grounding and range validation.
+\paragraph{PII redaction.} Email addresses and phone numbers are replaced by \code{[email]} and \code{[phone]} before text leaves the machine and before chat messages are stored. Images are sent to the model provider as inline data and are not stored locally. Other personal data is not redacted.
+\paragraph{Unit and range validation.} Units are converted and ranges are validated by \code{BeamInput}, as described in Chapter~\ref{ch:scope}.
+
+\section{Number-trace output guardrail}
+The narrative is generated from a \code{ReportData} object, a set of pre-formatted strings built by code from the verified result (inputs, design values, checks, assumptions, revision log and unit conversions). The writer prompt instructs the model to use only numbers that appear verbatim in the JSON, to cite the clause of every check, to put failed and warning checks first, never to call a design safe, adequate or approved, and to end with the draft stamp.
+
+The guardrail (\code{trace_numbers} in \fpath{backend/app/guardrails/output.py}) then checks the text mechanically.
+\begin{enumerate}
+  \item It extracts the numbers of every string in \code{ReportData} to form the allowed set. The numeric pattern is an unsigned integer or decimal not preceded by a digit or a point; superscripts and a trailing 2 or 3 after a letter or a slash (``mm2'', ``m3'') are treated as unit text; list markers (``1.'') in the narrative are ignored.
+  \item It extracts the numbers of the narrative in the same way and returns those that are not in the allowed set.
+  \item The narrative is accepted only if that list is empty \emph{and} the draft stamp is present.
+\end{enumerate}
+\code{write_report} makes up to three attempts (\code{MAX_WRITER_ATTEMPTS}). After a rejection it asks the model again with the list of rejected numbers. If the third attempt is also rejected, or if the model cannot be reached at any point, the deterministic \code{template_narrative} is used and the source is recorded as \code{template}. Without a configured model the template is used directly. The sequence is shown in Figure~\ref{fig:trace}; every rejection and the fallback are recorded as events (\code{number_trace_rejected}, \code{writer_llm_error}, \code{fallback_template}, \code{writer_skipped}).
+
+\begin{figure}[H]
+\centering
+\input{figures/fig_trace}
+\caption{Number-trace guardrail. The orange step is the only model call; the check and the fallback are deterministic.}
+\label{fig:trace}
+\end{figure}
+
+The trace checks that a number \emph{exists} in the report, not that it is attached to the right quantity. This limitation is discussed in Chapter~\ref{ch:limits}.

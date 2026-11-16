@@ -1,0 +1,27 @@
+\chapter{Environment variables}\label{app:env}
+
+\begin{longtable}{@{}L{4.2cm}L{4.4cm}L{6.4cm}@{}}
+\caption{Environment variables read by the backend (\fpath{backend/app/config.py}) and by the Node server (\fpath{frontend/server.mjs}).}\label{tab:env}\\
+\toprule Variable & Default & Meaning \\ \midrule \endfirsthead
+\toprule Variable & Default & Meaning \\ \midrule \endhead
+\bottomrule \endlastfoot
+\multicolumn{3}{@{}l}{\textit{Backend}} \\
+\code{GEMINI_API_KEY} & empty & Gemini API key. Empty disables natural-language intake and model-written narratives. \\
+\code{LLM_TIMEOUT_S} & 25 & Timeout of one Gemini call, in seconds. \\
+\code{LLM_BUDGET_S} & 60 & Total wall-clock budget of one \code{generate()} call across all models and retries, in seconds. \\
+\code{SDCV_API_TOKEN} & unset & If set, every \code{/api/*} route except \code{/api/health} requires this token. \\
+\code{RATE_LIMIT_PER_MIN} & 30 & Requests per minute per client and route for \code{POST /api/chat}, \code{/api/design} and \code{/api/explore}; 0 disables the limit. \\
+\code{SDCV_DATA_DIR} & \fpath{backend/data} & Directory of \code{audit.db}; used to point tests at a throwaway database. \\
+\code{SDCV_INTAKE_BACKEND} & \code{gemini} & \code{gemini} or \code{local}; \code{local} uses a fine-tuned Qwen model for intake. \\
+\code{SDCV_LOCAL_MODEL} & \code{Qwen/Qwen2.5-3B-Instruct} & Base model of the local intake. \\
+\code{SDCV_LOCAL_ADAPTER} & unset & Folder of the LoRA adapter. \\
+\code{SDCV_LOCAL_4BIT} & off & Load the local model in 4-bit (\code{1}, \code{true} or \code{yes}). \\
+\code{SDCV_VISION_BACKEND} & empty & \code{gemini}, \code{local} or empty. When set, images are first transcribed by that model. Defaults to \code{gemini} when intake is \code{local}. \\
+\code{SDCV_VISION_MODEL} & \code{Qwen/Qwen2.5-VL-3B-Instruct} & The local vision model. \\
+\multicolumn{3}{@{}l}{\textit{Node server}} \\
+\code{PORT} & 3000 & Listening port. \\
+\code{HOST} & 127.0.0.1 & Listening address. \\
+\code{BACKEND_URL} & \code{http://127.0.0.1:8000} & Backend origin to which \code{/api/*} is proxied. \\
+\end{longtable}
+
+Constants that are not environment variables: the selectable models (\code{MODEL_OPTIONS}), \code{MAX_REVISER_ITERATIONS} = 8, \code{MAX_WRITER_ATTEMPTS} = 3, and the static file allowlists.

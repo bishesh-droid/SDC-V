@@ -1,0 +1,33 @@
+% Verify-and-revise loop (design_with_verification). Every node is deterministic code.
+{\hyphenpenalty=10000\exhyphenpenalty=10000
+\begin{tikzpicture}[x=1cm,y=1cm,
+  dec/.style={det,diamond,aspect=3.2,inner sep=0pt,text width=3.3cm,font=\scriptsize},
+  term/.style={neu,font=\small\bfseries}]
+  \node[term] (in) at (4.5,0) {\texttt{BeamInput} (validated)};
+  \node[det,text width=4.6cm] (calc) at (4.5,-1.5) {\texttt{design\_beam}: calculator, all numbers};
+  \node[det,text width=4.6cm] (rules) at (4.5,-3.0) {\texttt{run\_rules}: 19 rules};
+  \node[dec] (d1) at (4.5,-5.0) {any error-level rule failed?};
+  \node[dec] (d2) at (4.5,-7.2) {all failing rules revisable?};
+  \node[dec] (d3) at (4.5,-9.4) {8 revisions already made?};
+  \node[det,text width=5.6cm] (rev) at (4.5,-11.4) {\texttt{revise}: depth +25 mm while $D+25\le3b$ and $\le2000$; else width +25 mm while $\le1000$};
+  \node[dec] (d4) at (4.5,-13.6) {new section found?};
+  \node[term,fill=detfill!55] (ok) at (11.0,-5.0) {designed};
+  \node[term,fill=detfill!55,text width=3.3cm] (ne) at (11.0,-9.4) {needs\_engineer};
+
+  \draw[flow] (in) -- (calc);
+  \draw[flow] (calc) -- (rules);
+  \draw[flow] (rules) -- (d1);
+  \draw[flow] (d1) -- node[lbl,above] {no} (ok);
+  \draw[flow] (d1) -- node[lbl,right] {yes} (d2);
+  \draw[flow] (d2) -- node[lbl,right] {yes} (d3);
+  \draw[flow] (d2.east) -- node[lbl,above,pos=0.25] {no} ++(2.4,0) |- ($(ne.north)+(0,0.0)$);
+  \draw[flow] (d3.east) -- node[lbl,above] {yes} (ne.west);
+  \draw[flow] (d3) -- node[lbl,right] {no} (rev);
+  \draw[flow] (rev) -- (d4);
+  \draw[flow] (d4.east) -- node[lbl,above,pos=0.3] {no} ++(3.3,0) -| (ne.south);
+  \draw[flow] (d4.west) -- node[lbl,above,pos=0.3] {yes} ++(-2.6,0) |- (calc.west);
+  \node[lbl,rotate=90] at (0.55,-7.5) {next iteration: calculator runs again};
+\end{tikzpicture}}
+
+\vspace{4pt}
+{\small\detkey{} deterministic code; no model call occurs in this loop}

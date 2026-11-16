@@ -1,0 +1,47 @@
+\chapter{Database and audit log}\label{ch:db}
+
+\section{Storage engine}
+The audit log is a single SQLite file~\cite{sqlite}, \fpath{backend/data/audit.db}, or a file in the directory named by \code{SDCV_DATA_DIR}. It is created with \code{CREATE TABLE IF NOT EXISTS} on first start; there is no migration tool and no ORM. \fpath{audit.py} uses the standard-library \code{sqlite3} module with one connection per call and a lock around writes.
+
+\section{Schema}
+There is one table, \code{runs} (Figure~\ref{fig:er} and Table~\ref{tab:runs}). The \code{record} column holds a JSON document that contains the full \code{RunResult} and the tool versions.
+
+\begin{figure}[H]
+\centering
+\input{figures/fig_er}
+\caption{The \code{runs} table and the structure of its \code{record} JSON document. There are no foreign keys.}
+\label{fig:er}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{Columns of the \code{runs} table.}\label{tab:runs}
+\begin{tabular}{@{}llL{8.2cm}@{}}
+\toprule Column & Type & Content \\ \midrule
+\code{id} & TEXT, primary key & 12-character hexadecimal run identifier \\
+\code{created_at} & TEXT, not null & UTC ISO 8601 timestamp to the second \\
+\code{status} & TEXT, not null & One of the result statuses \\
+\code{mode} & TEXT, not null & \code{chat} or \code{structured} \\
+\code{summary} & TEXT & One-line description, for example support, span, grades, section and outcome \\
+\code{record} & TEXT, not null & JSON: \code{result}, \code{versions}, \code{llm_model} and mode-specific fields \\
+\code{reviewer} & TEXT & Reviewer name from the review endpoint \\
+\code{reviewed_at} & TEXT & UTC timestamp of the review entry \\
+\code{review_note} & TEXT & Optional note \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Indexes and constraints.} The primary key is \code{id} and a save uses \code{INSERT OR REPLACE}. Indexes are \code{idx_runs_created} on \code{created_at} descending and \code{idx_runs_status} on \code{status}. There are no foreign keys. Statistics use \code{json_extract} over \code{record}, which scans the table.
+
+\paragraph{Contents of \code{record}.} \code{result} is the \code{RunResult} (including \code{trace} and \code{llm_attempts}); \code{versions} holds \code{app}, \code{python}, \code{pydantic}, \code{code_edition} and \code{rules_fingerprint}; \code{llm_model} names the model or models used. A structured run adds \code{raw_input}. A chat run adds the redacted \code{messages}, \code{attachment_chars}, \code{image_count} and \code{intake}.
+
+\section{Queries and exports}
+\begin{itemize}
+  \item \textbf{Search.} Runs are listed newest first with optional filters on status, mode, a text query (matched with an escaped \code{LIKE} against identifier, summary and reviewer) and reviewed state, with a limit and offset and the total count.
+  \item \textbf{Statistics.} Counts by status, mode, reviewed runs, runs in the last 24 hours, runs per model and runs per narrative source.
+  \item \textbf{CSV export.} The filtered list as a download, up to 5000 rows, with spreadsheet formula-injection protection.
+  \item \textbf{Markdown report.} A report rebuilt from the stored, already verified result, with the code edition and rule fingerprint.
+\end{itemize}
+
+\section{Reviewer log}
+\code{POST /api/runs/{run_id}/review} sets \code{reviewer}, \code{reviewed_at} and \code{review_note} for an existing run. It records a log entry only. The endpoint does not verify identity, there are no user accounts, and the entry is not a certification; the stamp on every output remains.

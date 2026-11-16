@@ -1,0 +1,66 @@
+\chapter{System architecture}\label{ch:arch}
+
+\section{Four layers}
+The system has four layers, shown in Figure~\ref{fig:arch}.
+\begin{enumerate}
+  \item \textbf{Browser interface.} Static HTML, CSS and native ES modules in \fpath{frontend/}, with no build step and no third-party runtime dependency.
+  \item \textbf{Optional Node proxy.} \fpath{frontend/server.mjs} serves the static files and forwards \code{/api/*} to the backend. The backend can also serve the interface itself.
+  \item \textbf{FastAPI backend.} \fpath{backend/app/} is a JSON API plus a static file server~\cite{fastapi}, served by Uvicorn~\cite{uvicorn} and using Pydantic models~\cite{pydantic} at its boundaries. A request middleware performs the token check, the rate limit, the security headers and the request log.
+  \item \textbf{Persistence and external services.} A SQLite audit log~\cite{sqlite} in \fpath{backend/data/audit.db}, and the Google Gemini REST API~\cite{gemini}, which is the only external service.
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\input{figures/fig_architecture}
+\caption{High-level four-layer architecture. Blue marks deterministic code, orange marks the only module that talks to the language model, grey marks the browser, proxy and storage.}
+\label{fig:arch}
+\end{figure}
+
+\section{Backend modules}
+One \code{AuditLog}, one \code{GeminiClient}, one \code{Pipeline} and one \code{RateLimiter} are instantiated at import time in \code{main.py}. Each request that needs the pipeline calls \code{pipeline.with_model(model)}, which returns a new \code{Pipeline} bound to a per-request \code{GeminiClient} that tries the selected model first and then the other configured models. Per-request state (trace, attempts, last model) is therefore never shared between requests. Table~\ref{tab:modules} lists the modules.
+
+\begin{longtable}{@{}L{4.3cm}L{10.7cm}@{}}
+\caption{Backend modules in \fpath{backend/app/}. Line counts are not given because they change with every edit.}\label{tab:modules}\\
+\toprule Module & Responsibility \\ \midrule \endfirsthead
+\toprule Module & Responsibility \\ \midrule \endhead
+\bottomrule \endlastfoot
+\code{main.py} & FastAPI application, request and response models, the request middleware, all routes and the static file routes (\code{/} and \code{/static/{name}}); configures logging. \\
+\code{config.py} & Loads \code{.env} files; defines the model list, timeouts, rate limit, API token accessor, data directory and the reviser and writer limits. Holds \code{APP_VERSION} (``0.2.0''). \\
+\code{pipeline.py} & Orchestrator. Owns the status vocabulary, the verification loop \code{design_with_verification}, the \code{RunResult} response model, the per-stage trace and \code{tool_versions}. \\
+\code{schemas.py} & Pydantic models: \code{BeamInput}, \code{CheckResult}, \code{BarArrangement}, \code{Design}. \\
+\code{is456/calculator.py} & \code{design_beam}: the deterministic calculator. Pure Python, no I/O. \\
+\code{is456/tables.py} & IS~456:2000 constants and tables with clause references, and the fitted functions \code{tau_c} and \code{deflection_modification}. \\
+\code{verifier.py} & The rule registry: 19 rules registered with the \code{@rule} decorator, \code{RULE_META}, \code{run_rules} and \code{rules_fingerprint}. \\
+\code{reviser.py} & Deterministic section reviser. \\
+\code{guardrails/input.py} & \code{RawIntake}, unit normalisation, range validation, scope and unsafe-request screening, injection flags, PII redaction, number extraction for grounding. \\
+\code{guardrails/output.py} & \code{trace_numbers}: the number-trace output guardrail. \\
+\code{llm/gemini.py} & \code{GeminiClient}, the \code{LLM} protocol, \code{LLMError}, \code{parse_json}. \\
+\code{llm/intake.py} & The intake agent: system prompt and \code{run_intake}. \\
+\code{llm/writer.py} & The writer prompt and \code{write_report}. \\
+\code{llm/vision.py}, \code{llm/local.py}, \code{llm/factory.py} & Optional two-stage intake: a vision transcriber and optional local models, enabled only through \code{SDCV_*} settings. \\
+\code{report.py} & \code{ReportData} (pre-formatted strings), the draft \code{STAMP}, \code{build_report_data}, the template narrative. \\
+\code{sketch.py} & Server-side SVG cross-section for reports and exports. \\
+\code{explore.py} & The what-if section explorer. No model, no audit write. \\
+\code{export.py} & Markdown report of a stored run and CSV export with spreadsheet formula-injection protection. \\
+\code{scope.py} & Builds the supported-scope description from \code{BeamInput} and the guard pattern labels. \\
+\code{security.py} & Client address resolution, sliding-window \code{RateLimiter}, constant-time token comparison, security headers. \\
+\code{audit.py} & The SQLite audit log. \\
+\code{kb.py} & The reference knowledge base: 105 entries in 19 topics. \\
+\code{system_model.py} & Describes the system as a knowledge-based system (facts, derivation rules, verifier rules, guardrail rules, meta-rules, modules, endpoints). \\
+\end{longtable}
+
+\section{Design patterns}
+\begin{itemize}
+  \item \textbf{Pipeline with explicit stages and a status vocabulary} (\code{designed}, \code{needs_engineer}, \code{needs_info}, \code{rejected}, \code{out_of_scope}, \code{refused}, \code{error}).
+  \item \textbf{Rule registry.} Rules are plain functions registered with a decorator, which gives a single source for the verifier, the rule-list endpoint and the rule fingerprint.
+  \item \textbf{Protocol-based model client.} The \code{LLM} protocol (\code{generate(system, user, json_mode, images)}) is the only contract the pipeline needs, which is how tests substitute a scripted fake.
+  \item \textbf{Fail closed.} If the model is unavailable, unparseable or untraceable, the result is an explicit error status or a deterministic template, never a guessed value.
+  \item \textbf{Allowlists over blocklists} for static files and model identifiers.
+  \item \textbf{Single source of truth for scope}, as described in Chapter~\ref{ch:scope}.
+\end{itemize}
+
+\section{Frontend modules}
+The interface is vanilla JavaScript loaded as native ES modules from \code{app.js}. \code{chrome.js} owns the shell (header, sidebar, router, status bar, command palette, theme). Each view is one module that registers itself with the router; \code{result.js} renders a design result for the form, history and assistant views. \code{theme.css} is the only place colours are defined: deterministic output (calculator, verifier, reviser, audit) is coloured differently from language-model output (intake, narrative), and green, amber and red are reserved for verdicts. Beam drawings in \code{beam.js} are inline SVG rendered from numbers returned by the API; no engineering value is computed in the browser. The Content Security Policy is \code{script-src 'self'}, so there are no inline scripts, and the theme is applied before first paint by an external script (\code{theme-init.js}). Chapter~\ref{ch:frontend} describes the views.
+
+\section{Trust boundary}
+The model sits at two points only (intake and narrative); between them everything is code. The audit write and the final response contain only values that came from code. Figure~\ref{fig:pipeline} in Chapter~\ref{ch:flow} marks the deterministic and the language-model stages of a chat request.

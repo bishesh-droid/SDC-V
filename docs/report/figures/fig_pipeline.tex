@@ -1,0 +1,42 @@
+% Request pipeline for POST /api/chat. Deterministic stages are blue, model stages orange.
+{\hyphenpenalty=10000\exhyphenpenalty=10000
+\begin{tikzpicture}[x=1cm,y=1cm,scale=0.92,transform shape,
+  main/.style={text width=6.4cm,minimum height=0.8cm}]
+  \def\dy{1.28}
+  \node[neu,main] (n0)  at (0,0)        {\texttt{POST /api/chat}: messages, attachment, images};
+  \node[det,main] (n1)  at (0,-1*\dy)   {1. Scope and unsafe-request screen};
+  \node[det,main] (n2)  at (0,-2*\dy)   {2. Injection flags (logged, not blocking)};
+  \node[det,main] (n3)  at (0,-3*\dy)   {3. Model available? (key or local intake)};
+  \node[det,main] (n4)  at (0,-4*\dy)   {4. PII redaction of transcript and attachment};
+  \node[llm,main,dashed] (n5) at (0,-5*\dy) {5. Snapshot transcription (only if a vision backend is set)};
+  \node[llm,main] (n6)  at (0,-6*\dy)   {6. Intake: model returns JSON (intent, fields)};
+  \node[det,main] (n7)  at (0,-7*\dy)   {7. Intent handling};
+  \node[det,main] (n8)  at (0,-8*\dy)   {8. Grounding of every extracted number; factored-load check};
+  \node[det,main] (n9)  at (0,-9*\dy)   {9. Normalisation, unit conversion, range validation};
+  \node[det,main] (n10) at (0,-10*\dy)  {10. Calculator, verifier, reviser loop};
+  \node[det,main] (n11) at (0,-11*\dy)  {11. Report data (pre-formatted strings)};
+  \node[llm,main] (n12) at (0,-12*\dy)  {12. Narrative by the model; number trace, up to 3 attempts};
+  \node[det,main] (n13) at (0,-13*\dy)  {13. Section sketch (SVG)};
+  \node[det,main] (n14) at (0,-14*\dy)  {14. Audit write (SQLite)};
+  \node[neu,main] (n15) at (0,-15*\dy)  {JSON \texttt{RunResult}, HTTP 200};
+
+  \foreach \a/\b in {0/1,1/2,2/3,3/4,4/5,5/6,6/7,7/8,8/9,9/10,10/11,11/12,12/13,13/14,14/15}
+    \draw[flow] (n\a) -- (n\b);
+
+  % early exits
+  \node[neu,text width=3.6cm] (x1) at (7.6,-1*\dy)  {\texttt{refused} or \texttt{out\_of\_scope}};
+  \node[neu,text width=3.6cm] (x3) at (7.6,-3*\dy)  {\texttt{error} (no model)};
+  \node[neu,text width=3.6cm] (x6) at (7.6,-6*\dy)  {\texttt{error} (model unusable)};
+  \node[neu,text width=3.6cm] (x7) at (7.6,-7*\dy)  {\texttt{refused} or \texttt{out\_of\_scope}};
+  \node[neu,text width=3.6cm] (x9) at (7.6,-9*\dy)  {\texttt{needs\_info}, \texttt{rejected} or \texttt{out\_of\_scope}};
+  \node[det,text width=3.6cm] (x12) at (7.6,-12*\dy) {template narrative (fallback)};
+  \foreach \s in {1,3,6,7,9}
+    \draw[flow] (n\s.east) -- (x\s.west);
+  \draw[flow] (n12.east) -- node[lbl,above] {3 rejections} (x12.west);
+  \draw[flow] (x12.south) -- ++(0,-0.62) -| (n13.east);
+  % records the audit trail of early exits as well
+  \node[lbl,text width=3.6cm,align=center] at (7.6,-14*\dy) {every exit is written to the audit log};
+\end{tikzpicture}}
+
+\vspace{4pt}
+{\small\detkey{} deterministic code \quad \llmkey{} touches the language model \quad \neukey{} entry, exit and response}

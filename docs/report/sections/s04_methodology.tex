@@ -1,0 +1,97 @@
+\chapter{Design methodology}\label{ch:method}
+
+The calculator \code{design_beam} in \fpath{backend/app/is456/calculator.py} implements the limit state method of IS~456:2000~\cite{is456} for a singly reinforced rectangular section. Internally it works in N, mm and N/mm$^2$, and reports kN, kN\,m and kN/m. Lengths below are in mm unless stated, $L$ is the span in metres, $b$ is the width, $D$ the overall depth and $d$ the effective depth.
+
+\section{Loads}
+Self-weight uses a unit weight of reinforced concrete of 25~kN/m$^3$ (\clause{19.2.1}). The characteristic and the factored line loads are
+\begin{align}
+  w_{sw} &= 25\,\frac{b\,D}{10^{6}} \quad [\text{kN/m}],\\
+  w      &= w_{DL} + w_{LL} + w_{sw}, \qquad w_u = 1.5\,w,
+\end{align}
+where $w_{DL}$ is the superimposed dead load (excluding self-weight) and $w_{LL}$ the imposed load. The load factor of 1.5 is applied to the dead plus live combination (Table~18).
+
+\section{Moment and shear}
+For a simply supported beam the design moment and shear are $M_u = w_u L^2/8$ and $V_u = w_u L/2$. For a cantilever, $M_u = w_u L^2/2$ and $V_u = w_u L$. The design shear is taken at the support face; no reduction is made for the section at a distance $d$ from the face, which is conservative.
+
+\section{Flexure}
+The limiting depth of the neutral axis is $x_{u,\max}/d = 0.53,\ 0.48,\ 0.46$ for Fe250, Fe415 and Fe500 (\clause{38.1}). With $k = x_{u,\max}/d$, the limiting moment of resistance (Annex~G-1.1(a)) is
+\begin{equation}
+  M_{u,\mathrm{lim}} = 0.36\,f_{ck}\,b\,(k d)\,(d - 0.42\,k d).
+\end{equation}
+The area of tension steel required for the moment (Annex~G-1.1(b)) is
+\begin{equation}
+  A_{st,f} = 0.5\,\frac{f_{ck}}{f_y}\left[1-\sqrt{1-\frac{4.6\,M_u}{f_{ck}\,b\,d^{2}}}\right] b\,d,
+\end{equation}
+evaluated with $M_u$ capped at $M_{u,\mathrm{lim}}$. The calculator never designs a doubly reinforced section: when $M_u$ exceeds $M_{u,\mathrm{lim}}$ the verifier rule \code{MU_LIM} fails and the section must be enlarged (Chapter~\ref{ch:verify}). The minimum and maximum tension steel are
+\begin{equation}
+  A_{st,\min} = \frac{0.85\,b\,d}{f_y}, \qquad A_{st,\max} = 0.04\,b\,D \quad(\text{\clause{26.5.1.1}}),
+\end{equation}
+and the required area is $A_{st,\mathrm{req}} = \max(A_{st,f},\,A_{st,\min})$.
+
+\section{Bar selection and effective depth}
+The effective depth depends on the bar arrangement, because $d = D - \bar y$, where $\bar y$ is the distance from the tension face to the centroid of the bars. The calculator therefore iterates: it starts from $d = D - \text{cover} - 8 - 16/2$, selects bars for the target area, recomputes $d$, and repeats up to 12 times until $d$ stops changing.
+
+Bar selection (\code{pick_bars}) works as follows.
+\begin{itemize}
+  \item Candidate diameters are 12, 16, 20, 25 and 32~mm. One layer is tried first and two layers only if no single-layer arrangement is large enough.
+  \item The minimum clear horizontal spacing is $\max(\phi,\ 20 + 5)$~mm (\clause{26.3.2}, with the assumed 20~mm aggregate). The vertical spacing between layers is $\max(15,\phi)$~mm.
+  \item The number of bars is bounded: at most 4 bars of 12~mm, at most 6 bars in a single layer, at most 10 bars in two layers.
+  \item A candidate whose clear spacing exceeds the crack-control limit of Table~15 (300, 180 and 150~mm for Fe250, Fe415 and Fe500) is skipped, so that an extra bar is added instead.
+  \item The arrangement with the smallest area not less than the target is chosen; ties are broken by the number of bars. If nothing is large enough, the largest arrangement tried is returned and the verifier reports the shortfall.
+\end{itemize}
+With the provided area $A_{st,p}$ the neutral-axis depth is $x_u = 0.87 f_y A_{st,p}/(0.36 f_{ck} b)$ and the percentage of steel is $p_t = 100\,A_{st,p}/(b d)$.
+
+\section{Shear reinforcement}
+The nominal shear stress is $\tau_v = V_u\,10^{3}/(b d)$. The design shear strength of concrete $\tau_c$ is a closed-form fit of Table~19 (\clause{40.2.1}), with $p_t$ clamped to the table range 0.15 to 3.0\,\%:
+\begin{equation}
+  \beta = \max\!\left(1,\ \frac{0.8\,f_{ck}}{6.89\,p_t}\right), \qquad
+  \tau_c = 0.85\sqrt{0.8\,f_{ck}}\;\frac{\sqrt{1+5\beta}-1}{6\beta}.
+\end{equation}
+The maximum shear stress $\tau_{c,\max}$ is taken from Table~20: 2.8, 3.1, 3.5, 3.7 and 4.0~N/mm$^2$ for M20 to M40. The shear to be carried by stirrups is $V_{us} = \max(0,\ V_u - \tau_c b d/10^{3})$. With two-legged 8~mm stirrups ($A_{sv} = 2\cdot\pi\cdot 8^2/4$), three candidate spacings are computed:
+\begin{align}
+  s_{v,\mathrm{strength}} &= \frac{0.87 f_y A_{sv} d}{V_{us}\,10^{3}} \quad(\text{if } V_{us}>0), \\
+  s_{v,\mathrm{min\,steel}} &= \frac{0.87 f_y A_{sv}}{0.4\,b} \quad(\text{\clause{26.5.1.6}}),\\
+  s_{v,\mathrm{limit}} &= \min(0.75\,d,\ 300) \quad(\text{\clause{26.5.1.5}}).
+\end{align}
+The provided spacing is the smallest of the three, rounded down to a multiple of 5~mm.
+
+\section{Deflection control}
+The basic span to effective-depth ratio is 20 for a simply supported beam and 7 for a cantilever (\clause{23.2.1}); for a simply supported span above 10~m the basic ratio is multiplied by $10/L$. The steel stress is $f_s = 0.58\,f_y\,A_{st,\mathrm{req}}/A_{st,p}$ and the modification factor for tension steel is an analytic fit of Figure~4, capped at 2.0:
+\begin{equation}
+  k_t = \min\!\left(2.0,\ \frac{1}{0.225 + 0.00322\,f_s - 0.625\log_{10}p_t}\right), \qquad p_t \ge 0.05.
+\end{equation}
+The allowable ratio is $k_t$ times the basic ratio and the actual ratio is $1000\,L/d$.
+
+\section{Detailing}
+The clear spacing of the bars in the first layer is $\bigl(b - 2(\text{cover}+\phi_s) - n_1\phi\bigr)/(n_1-1)$, where $\phi_s$ is the stirrup diameter. It is reported with the minimum and maximum limits above. The minimum cover and the minimum concrete grade by exposure are taken from Table~16 and Table~5 of the code (listed in Table~\ref{tab:exposure}) and are checked, not adjusted, by the verifier.
+
+\begin{table}[H]
+\centering
+\caption{Exposure tables used by the verifier (\fpath{backend/app/is456/tables.py}).}\label{tab:exposure}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Exposure & Minimum nominal cover (mm) & Minimum grade \\
+\midrule
+Mild & 20 & M20 \\
+Moderate & 30 & M25 \\
+Severe & 45 & M30 \\
+Very severe & 50 & M35 \\
+Extreme & 75 & M40 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Fixed assumptions}
+The following assumptions are constants of the calculator and are listed in every result.
+\begin{itemize}
+  \item The span supplied by the user is the effective span (\clause{22.2}).
+  \item Concrete unit weight 25~kN/m$^3$; load factor 1.5 on dead plus live load.
+  \item Rectangular section, singly reinforced, uniformly distributed load; limit state method.
+  \item Two-legged 8~mm stirrups; nominal cover is measured to the stirrup; minimum practical stirrup spacing 75~mm.
+  \item Design shear taken at the support, with no reduction for the section at $d$ from the face.
+  \item Two 12~mm hanger bars at the compression face.
+  \item Nominal maximum aggregate size 20~mm; no moment redistribution; normal-weight concrete.
+  \item For a cantilever, the tension steel is at the top face and must be anchored into the support.
+  \item $\tau_c$ and the deflection modification factor use analytic fits of Table~19 and Figure~4 (Chapter~\ref{ch:limits}).
+\end{itemize}
+The strain constant $\varepsilon_{cu} = 0.0035$ (\clause{38.1}) is carried in the design record for the strain diagram of the interface; it is never used in a calculation.

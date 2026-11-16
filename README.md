@@ -142,7 +142,10 @@ Module trust boundary: the model sits at two points only (intake and narrative).
 ## Root Directory
 
 - `README.md` — This document.
-- `.gitignore` — Excludes secrets (`.env`, `.env.*` except `.env.example`), local databases (`*.db`, `*.sqlite3`), Python caches and virtual environments, tooling state directories (`.claude/`, `.claude-flow/`, `.swarm/`, `.agents/`, `.codex/`), logs, benchmark outputs (`benchmark/results/`, `benchmark/*_results.*`) and the local notes file `LLM_addition.md`.
+- `.gitignore` — Excludes secrets (`.env`, `.env.*` except `.env.example`), local databases (`*.db`, `*.sqlite3`), Python caches and virtual environments, tooling state directories (`.claude/`, `.claude-flow/`, `.swarm/`, `.agents/`, `.codex/`), logs, benchmark outputs (`benchmark/results/`, `benchmark/*_results.*`), generated training data and adapters (`training/data/`, `training/outputs/`), downloaded archives (`*.zip`), LaTeX build artifacts under `docs/report/` (`*.aux`, `*.bbl`, `*.toc` and similar; the `.tex` sources and `main.pdf` are tracked) and the local notes file `LLM_addition.md`.
+- `docs/report/` — LaTeX source of the full project report (`main.tex`, `sections/`, `figures/`, `references.bib`), the compiled `main.pdf`, a `Makefile`, and `tools/gen_example.py` and `tools/gen_tree.py`, which generate appendix content from the running code. Build with `make` in that directory. Not used at runtime.
+- `sessions_dataset.html` — Standalone, self-contained HTML viewer for guard sessions (allow, limit, block and escalate outcomes). Open it directly in a browser. Not used at runtime.
+- `training/` — Local-model intake fine-tuning scripts and notebook (see `training/README.md`). Generated data and outputs are ignored by git.
 - `.env` — Optional, untracked. A repository-root environment file read by `config.py` after `backend/.env`.
 - `SDC-V.docx`, `SDC-V.pdf`, `SDC-V_v2.docx`, `Structural_Design_Copilot.docx` — Project report documents. They are not used at runtime. The v2 report predates the current frontend and the guard benchmark.
 - `LLM_addition.md` — Untracked local planning notes (ignored by git). Not part of the product.

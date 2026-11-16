@@ -1,0 +1,61 @@
+\chapter{Deployment, configuration and security considerations}\label{ch:deploy}
+
+\section{What exists}
+The repository contains no Dockerfile, compose file, process-supervisor configuration, CI/CD workflow or infrastructure code, and no dependency lock file. \fpath{backend/requirements.txt} lists lower bounds only: \code{fastapi>=0.110}, \code{uvicorn>=0.29}, \code{pydantic>=2.6}, \code{httpx>=0.27} and \code{pytest>=8.0}. Python 3.10 or later is required because the code uses \code{X | None} union syntax; the project was developed on Python 3.14 with Pydantic 2.13.
+
+\section{Running}
+\begin{lstlisting}[language=bash]
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+\end{lstlisting}
+The backend serves the interface and the API from one origin provided the \fpath{frontend/} directory sits next to \fpath{backend/}. Optionally \code{npm start} in \fpath{frontend/} runs the Node proxy on port 3000. Use a single worker: the rate limiter and the live-check cache are in process memory, so several workers would each keep their own counters.
+
+\section{Configuration}
+Settings come from environment variables (Appendix~\ref{app:env}). \code{backend/.env} is read first and then the repository-root \code{.env}, with a ``set if not already set'' rule, so a real environment variable wins over \code{backend/.env}, which wins over the root file. A variable that is set but empty still counts as set, so \code{GEMINI_API_KEY=} on the command line disables the model even if a file contains a key. Some settings are constants that need an edit and a restart: the model list, \code{MAX_REVISER_ITERATIONS} (8), \code{MAX_WRITER_ATTEMPTS} (3) and the static file allowlists in \code{main.py} and \code{server.mjs}.
+
+\section{Production recommendations}
+The following follow from the code and are the practice described by the project, not features of the repository.
+\begin{enumerate}
+  \item Pin the versions that were tested, because dependencies are not locked.
+  \item Supply \code{GEMINI_API_KEY}, \code{SDCV_API_TOKEN} and optionally \code{RATE_LIMIT_PER_MIN} through the process environment rather than a file.
+  \item Bind uvicorn to loopback and put a reverse proxy with TLS in front. The application has no TLS. The client address is the socket peer, or the first \code{X-Forwarded-For} entry only when the peer is a loopback address, so the proxy must run on the same host or the rate limiter sees one client. The Node proxy overwrites \code{X-Forwarded-For} with the real client address.
+  \item Back up \code{backend/data/audit.db} (or \code{SDCV_DATA_DIR}), the only persistent state.
+\end{enumerate}
+
+\section{Security controls in the code}
+\begin{description}[leftmargin=3.4cm,style=nextline]
+  \item[Authentication] An optional single shared token (\code{SDCV_API_TOKEN}), compared in constant time. When unset the API is open. The static routes are never protected.
+  \item[Authorisation] None. There are no users, roles or run ownership. Any client with the token can list and read every run, export the log and log a review.
+  \item[Input validation] Pydantic validation of every body and query parameter with explicit length limits; images must match their declared type by leading bytes and are limited in size and number; model identifiers are validated against the configured list; engineering inputs pass \code{BeamInput}.
+  \item[Static files] Served from allowlists of single-segment names, which blocks path traversal.
+  \item[Rate limiting] A sliding window of 60 seconds per client address and route for \code{POST /api/chat}, \code{/api/design} and \code{/api/explore}, default 30 per minute, in memory; idle keys are pruned when more than 5000 accumulate.
+  \item[Response headers] The backend sets the headers below on every response; the Node server sets a subset on the pages it serves.
+    \begin{itemize}
+      \item \code{X-Content-Type-Options: nosniff}
+      \item \code{X-Frame-Options: DENY}
+      \item \code{Referrer-Policy: no-referrer}
+      \item \code{Cross-Origin-Opener-Policy: same-origin}
+      \item \code{Content-Security-Policy}, with the value given in Listing~\ref{lst:csp}.
+    \end{itemize}
+  \item[Secrets] Read from the environment or from untracked \code{.env} files; the key is sent only in the \code{x-goog-api-key} header and is never returned by any endpoint (\code{/api/health} reports only whether a key is configured).
+  \item[Model-facing controls] Scope and unsafe-request screens before any model call; attachments and image text labelled as data; grounding of extracted numbers; number-trace check of the narrative; the model never produces a value used in a calculation or a verdict.
+  \item[Logging] Python \code{logging} to standard error at INFO level: logger \code{sdcv.http} writes one line per API request and \code{sdcv.llm} one line per successful model call and a warning when every model fails. There is no structured logging, level configuration or rotation, and no metrics endpoint.
+\end{description}
+
+\begin{lstlisting}[caption={Content Security Policy set by the backend (\texttt{SECURITY\_HEADERS} in \texttt{security.py}).},label={lst:csp}]
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'
+\end{lstlisting}
+
+\section{Known risks}
+\begin{itemize}
+  \item No authentication by default, and no per-user access control when a token is set.
+  \item No TLS in the application.
+  \item The Content Security Policy allows inline styles because the interface sets some styles from script.
+  \item Redaction covers only email addresses and phone numbers; other personal data in a brief or an image would be sent to the model provider, and images are sent to Google.
+  \item Structured form values are stored in the audit log as submitted.
+  \item Dependencies are not pinned and not scanned.
+  \item The regular-expression screens can be bypassed by paraphrase. The model-side intent check and the deterministic validation are then the remaining controls.
+\end{itemize}

@@ -1,0 +1,31 @@
+\chapter{Introduction and problem statement}\label{ch:intro}
+
+\section{Problem}
+Drafting a singly reinforced rectangular beam by hand involves a long chain of small calculations: loads, bending moment and shear force, flexural reinforcement, bar selection, shear reinforcement, deflection control and detailing rules. A single wrong number is difficult to spot in such a chain, and the cost of an unnoticed error is a member that is under-designed. A language model is attractive as a front end, because engineers describe beams in words, sketches and tender extracts rather than in the fields of a form. It is unsuitable as a calculator.
+
+\section{Why a language model must never own a number}
+A language model produces text that is statistically plausible. It does not execute the formulae of a design code, and it can state a value that looks right but is wrong, with no indication of the error. For structural design this property is unacceptable in three specific ways.
+\begin{enumerate}
+  \item \textbf{Silent numerical errors.} An arithmetic slip, a wrong table lookup or a mixed-up unit in generated text is indistinguishable from a correct value.
+  \item \textbf{No stable verdict.} The same prompt can yield different numbers on different occasions, so a result cannot be reproduced, audited or tested against reference values.
+  \item \textbf{Susceptibility to instructions in the data.} A pasted specification or an image can contain text that tries to steer the model, for example to approve a design or to relax a margin.
+\end{enumerate}
+\sdcv{} therefore separates the two concerns. Code owns every number and every verdict. The model is confined to reading the brief and to narrating a result that has already been verified, and its narrative is checked mechanically against that result. This is the central design rule of the project, and the remaining chapters follow from it: the \emph{trust boundary} lies between the model and the numbers.
+
+\section{Objectives}
+The system is intended to:
+\begin{itemize}
+  \item produce a checked first draft of a beam section and its reinforcement for a supported class of beams, using the limit state method of IS~456:2000;
+  \item accept input from a structured form and from natural language, with optional images and a pasted attachment;
+  \item verify every result with rules that cite a clause of the code, including two independent recomputations of key quantities;
+  \item record every run in an audit log with the code edition, a fingerprint of the rule set and the tool versions;
+  \item reject, rather than approximate, anything outside its scope, and refuse requests to approve, certify or relax safety requirements.
+\end{itemize}
+
+\section{Intended users and status of the output}
+Intended users are structural engineers and students who want a fast, checked first draft, and developers who want a reference for a guarded language-model pipeline in which the model never owns a number. The tool does not replace engineering judgement. All output carries the stamp
+\begin{quote}\small\textbf{\stamp}\end{quote}
+which is a constant in the code (\code{STAMP} in \fpath{backend/app/report.py}); the narrative is rejected by the output guardrail if the model omits it.
+
+\section{Organisation of this report}
+Chapter~\ref{ch:scope} defines the scope. Chapters~\ref{ch:arch} to~\ref{ch:llm} describe the architecture, the design method, the verification layer and the model integration. Chapters~\ref{ch:flow} to~\ref{ch:frontend} describe the data flow, the API, the audit database and the browser interface. Chapters~\ref{ch:test} to~\ref{ch:perf} cover testing, deployment, security and performance. Chapters~\ref{ch:limits} to~\ref{ch:concl} give the limitations, a roadmap and the conclusion. Appendices list the environment variables, the directory tree and worked design examples.

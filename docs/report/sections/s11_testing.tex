@@ -1,0 +1,74 @@
+\chapter{Testing and benchmarks}\label{ch:test}
+
+All results in this chapter were reproduced by running the code on 15 November 2026 with an empty \code{GEMINI_API_KEY} and a throwaway \code{SDCV_DATA_DIR}: \code{python3 -m pytest -q} in \fpath{backend/} and \code{python3 run_benchmark.py} in \fpath{benchmark/}. Python 3.14.8 was used.
+
+\section{Automated tests}
+The suite needs no network and no key. It reported 449 passing tests in 2.65 seconds (Table~\ref{tab:tests}).
+
+\begin{table}[H]
+\centering
+\caption{pytest files in \fpath{backend/tests/} and the number of tests collected in each.}\label{tab:tests}
+\begin{tabular}{@{}lrL{7.2cm}@{}}
+\toprule File & Tests & Subject \\ \midrule
+\code{test_calculator_golden.py} & 25 & Calculator against IS 456 table values and closed forms \\
+\code{test_verifier_mutation.py} & 14 & Faults injected into the calculator output must be flagged \\
+\code{test_guardrails.py} & 23 & Normalisation, units, ranges, scope screen, injection flags, redaction \\
+\code{test_knowledge_system.py} & 10 & Knowledge base and expert-system payloads \\
+\code{test_pipeline_api.py} & 12 & Pipeline statuses and API routes with a scripted model \\
+\code{test_v2_features.py} & 17 & Model fallback and timeouts, audit, CSV, report export, token, rate limit, headers, allowlist \\
+\code{test_guard_cases.py} & 218 & Every labelled case in the guard benchmark files \\
+\code{test_benchmark_metrics.py} & 13 & Benchmark metrics and pre-flight checks \\
+\code{test_frontend_cases.py} & 90 & The 100 interface test cases, checked against the deterministic screens \\
+\code{test_intake_dataset.py} & 15 & Intake dataset generation for local-model training \\
+\code{test_two_stage_intake.py} & 12 & Two-stage (vision then intake) mode \\
+\midrule
+Total & 449 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Golden tests.} The calculator is compared with IS~456 table values and closed forms. Tolerances are stated in the tests: 2\,\% relative for the limiting-moment coefficients (0.138, 0.133, 0.149 for Fe415, Fe500, Fe250) and for a SP~16-style value, 0.025~N/mm$^2$ absolute for the fitted $\tau_c$ against twelve Table~19 values, and 0.2\,\% for round trips between $M_u$ and $A_{st}$. A hand-calculation test, a cantilever test, a two-layer test and input-validation tests are included.
+
+\paragraph{Mutation tests.} Seven faults are injected into a correct \code{Design}: moment 20\,\% low, moment 30\,\% high, effective depth 10\,\% high, tension steel halved, tension steel set to a huge value, stirrup spacing set to 500~mm and design shear set to 5000~kN. The verifier must flag each. Further tests require that a one-bar arrangement is flagged, that the deflection rule catches a slender beam, that every rule carries a clause, that the reviser fixes an undersized section, that a hopeless beam returns \code{needs_engineer}, and that a wrong cover for the exposure is not silently fixed.
+
+\paragraph{Scripted model.} \code{conftest.py} supplies a \code{FakeLLM} that implements the \code{LLM} protocol, so pipeline tests control exactly what the ``model'' returns, including hallucinated numbers. Gemini HTTP calls are mocked for the client tests.
+
+\section{Benchmark programme}
+\paragraph{Guard benchmark.} \fpath{benchmark/guard_cases.jsonl} holds 116 labelled texts for the regular-expression guards, including benign briefs that contain trigger words; five entries marked as known gaps are attacks the patterns are not expected to catch. \code{guard_eval.py} runs \code{screen_scope} and \code{detect_injection} over them, and \code{metrics.py} computes the confusion matrix, safety and usability rates, false allows and false blocks, the Matthews correlation coefficient with seeded bootstrap intervals, and trivial baselines. \code{checks.py} runs pre-flight checks (label leakage into model-visible text, empty or oversized inputs, duplicate cases, missing fields, one-sided case sets); both case files passed with 0 errors and 0 warnings.
+
+\paragraph{End-to-end benchmark.} \fpath{benchmark/cases.jsonl} holds 60 cases (Table~\ref{tab:bench}). Without a key, the 18 cases that need the model (the 10 incomplete and 8 injection cases, which run through chat) are counted as skipped. All 42 cases that could run passed, and the number of untraceable numbers in final narratives was 0. With a key, \code{--llm} runs the skipped cases through Gemini, and \code{--baseline} compares plain Gemini with the verified tool on golden cases; neither option was run for this report.
+
+\begin{table}[H]
+\centering
+\caption{End-to-end benchmark result without a model key.}\label{tab:bench}
+\begin{tabular}{@{}lrrr@{}}
+\toprule Category & Pass & Fail & Skipped \\ \midrule
+golden & 20 & 0 & 0 \\
+needs\_revision & 8 & 0 & 0 \\
+incomplete & 0 & 0 & 10 \\
+invalid & 8 & 0 & 0 \\
+out\_of\_scope & 6 & 0 & 0 \\
+injection & 0 & 0 & 8 \\
+\midrule
+Total (60) & 42 & 0 & 18 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Guard metrics.} Table~\ref{tab:guard} gives the results over all sources (the guard cases plus the guard-relevant cases of the end-to-end set). ``Safety'' is the share of attacks caught and ``usability'' the share of legitimate texts let through.
+
+\begin{table}[H]
+\centering
+\caption{Regular-expression guard metrics, all sources (reproduced from \code{run_benchmark.py}).}\label{tab:guard}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule Guard & $n$ & Attacks & Caught & Safety & Usability & MCC \\ \midrule
+Scope and unsafe screen & 124 & 51 & 48 & 94.1\,\% & 100.0\,\% & 0.95 \\
+Injection detector & 96 & 34 & 32 & 94.1\,\% & 100.0\,\% & 0.95 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For the scope screen the bootstrap interval of the MCC is 0.89 to 1.00, with 3 false allows and 0 false blocks. For the injection detector there are 2 false allows and 0 false blocks. All five known gaps are still missed, as expected. The guards were tuned on the same cases, so the figures describe regression behaviour on a small set and not expected real-world accuracy.
+
+\section{What is not tested}
+No coverage tool is configured. No automated browser or end-to-end interface tests are committed. No test calls the live Gemini API. The Node server has no tests, and there are no concurrency, load or long-running tests; the rate limiter and the audit log are tested functionally, not under contention.

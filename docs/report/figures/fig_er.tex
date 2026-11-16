@@ -1,0 +1,30 @@
+% Table diagram of the audit database: one table and the JSON structure of its record column.
+{\hyphenpenalty=10000\exhyphenpenalty=10000
+\begin{tikzpicture}[x=1cm,y=1cm,
+  col/.style={font=\footnotesize\ttfamily,anchor=west,inner sep=2pt},
+  typ/.style={font=\scriptsize,anchor=west,inner sep=2pt,text=neuline}]
+  % table runs
+  \node[draw=neuline,fill=neufill,minimum width=6.9cm,minimum height=0.8cm,anchor=north west,font=\bfseries\ttfamily] (h) at (0,0) {runs};
+  \node[draw=neuline,minimum width=6.9cm,minimum height=6.7cm,anchor=north west] (body) at (h.south west) {};
+  \foreach \cn/\ct/\cy in {id/TEXT PRIMARY KEY/1, created\_at/TEXT NOT NULL/2, status/TEXT NOT NULL/3, mode/TEXT NOT NULL/4,
+                        summary/TEXT/5, record/TEXT NOT NULL/6, reviewer/TEXT/7, reviewed\_at/TEXT/8, review\_note/TEXT/9}
+  {
+    \node[col] at ($(h.south west)+(0.15,-0.7*\cy+0.25)$) {\cn};
+    \node[typ] at ($(h.south west)+(3.2,-0.7*\cy+0.25)$) {\ct};
+  }
+  \node[font=\scriptsize,anchor=north west,text=neuline,align=left] at ($(body.south west)+(0.1,-0.15)$)
+    {indexes: \texttt{idx\_runs\_created} (\texttt{created\_at} DESC), \texttt{idx\_runs\_status} (\texttt{status})\\ no foreign keys; \texttt{INSERT OR REPLACE} on save};
+  % record structure
+  \node[draw=detline,fill=detfill,minimum width=6.5cm,minimum height=0.8cm,anchor=north west,font=\bfseries\ttfamily] (rh) at (8.0,0) {record (JSON)};
+  \node[draw=detline,minimum width=6.5cm,minimum height=6.7cm,anchor=north west] (rb) at (rh.south west) {};
+  \node[font=\footnotesize,anchor=north west,align=left,text width=6.2cm] at ($(rh.south west)+(0.1,-0.15)$)
+    {\texttt{result}: the \texttt{RunResult} (status, inputs, design, checks, iterations, report, narrative, trace, llm\_attempts)\\[3pt]
+     \texttt{versions}: app, python, pydantic, code\_edition, rules\_fingerprint\\[3pt]
+     \texttt{llm\_model}\\[3pt]
+     structured runs: \texttt{raw\_input}\\[3pt]
+     chat runs: redacted \texttt{messages}, \texttt{attachment\_chars}, \texttt{image\_count}, \texttt{intake}};
+  \draw[flow] ($(h.south east)+(0,-3.95)$) -- node[lbl,above] {holds JSON} ($(rh.south west)+(0,-3.95)$);
+  % reviewer bracket
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},color=outline] ($(h.south west)+(-0.2,-4.7)$) -- ($(h.south west)+(-0.2,-6.25)$);
+  \node[font=\scriptsize,rotate=90,anchor=south] at ($(h.south west)+(-0.45,-5.5)$) {set by review endpoint};
+\end{tikzpicture}}

@@ -1,0 +1,171 @@
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc,backgrounds,decorations.pathreplacing}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\usepackage{listings}
+\usepackage{amsmath}
+\usepackage{siunitx}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage[hidelinks,pdfusetitle,plainpages=false,pdfpagelabels]{hyperref}
+\urlstyle{tt}
+
+% ---------------------------------------------------------------- colours
+% One colour family for deterministic code, one for steps that touch the language model, grey for everything else.
+\definecolor{detline}{RGB}{31,78,121}
+\definecolor{detfill}{RGB}{221,235,247}
+\definecolor{llmline}{RGB}{196,89,17}
+\definecolor{llmfill}{RGB}{253,230,200}
+\definecolor{neuline}{RGB}{89,89,89}
+\definecolor{neufill}{RGB}{238,238,238}
+\definecolor{outline}{RGB}{60,60,60}
+
+% ---------------------------------------------------------------- macros
+% \code{} prints verbatim-like identifiers (underscores, %, #, & are safe); \fpath{} breaks long paths at slashes.
+% breakable code: characters are typeset literally, with a break opportunity after _ / . : , ; =
+\ExplSyntaxOn
+\NewDocumentCommand{\code}{m}{\texttt{\str_map_inline:nn{#1}{\__sdcv_char:n{##1}}}}
+\cs_new:Npn \__sdcv_char:n #1 { #1 \str_case:nnF {#1} { {_}{\allowbreak} {/}{\allowbreak} {.}{\allowbreak} {:}{\allowbreak} {,}{\allowbreak} {;}{\allowbreak} {=}{\allowbreak} } {} }
+\ExplSyntaxOff
+\DeclareRobustCommand{\fpath}[1]{\path{#1}}
+\newcommand{\clause}[1]{Cl.~#1}
+\newcommand{\sdcv}{SDC-V}
+\newcommand{\stamp}{DRAFT: requires review and sign-off by a licensed structural engineer. This output is not a certified design.}
+\newcommand{\detkey}{\tikz[baseline=-0.6ex]\node[draw=detline,fill=detfill,rounded corners=1pt,minimum width=6mm,minimum height=3mm,inner sep=0pt]{};}
+\newcommand{\llmkey}{\tikz[baseline=-0.6ex]\node[draw=llmline,fill=llmfill,rounded corners=1pt,minimum width=6mm,minimum height=3mm,inner sep=0pt]{};}
+\newcommand{\neukey}{\tikz[baseline=-0.6ex]\node[draw=neuline,fill=neufill,rounded corners=1pt,minimum width=6mm,minimum height=3mm,inner sep=0pt]{};}
+
+% shared TikZ styles
+\tikzset{
+  det/.style={draw=detline,fill=detfill,rounded corners=2pt,align=center,font=\small,inner sep=4pt,minimum height=7mm},
+  llm/.style={draw=llmline,fill=llmfill,rounded corners=2pt,align=center,font=\small,inner sep=4pt,minimum height=7mm},
+  neu/.style={draw=neuline,fill=neufill,rounded corners=2pt,align=center,font=\small,inner sep=4pt,minimum height=7mm},
+  flow/.style={-{Stealth[length=2.2mm]},thick,color=outline},
+  flowd/.style={-{Stealth[length=2.2mm]},thick,color=outline,dashed},
+  lbl/.style={font=\scriptsize,color=outline,inner sep=1.5pt},
+}
+
+% ---------------------------------------------------------------- listings
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{neuline},
+  backgroundcolor=\color{neufill!40},
+  aboveskip=8pt,
+  belowskip=8pt,
+  xleftmargin=4pt,
+  xrightmargin=4pt,
+  showstringspaces=false,
+}
+
+% ---------------------------------------------------------------- layout
+\setlength{\headheight}{14pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55\baselineskip}
+\renewcommand{\arraystretch}{1.12}
+\captionsetup{font=small,labelfont=bf,skip=6pt}
+\setlist{itemsep=2pt,topsep=3pt,parsep=0pt}
+\emergencystretch=2em
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textbf{DRAFT: not a certified design}}
+\fancyhead[R]{\small SDC-V 0.2.0 technical report}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyhead[L]{\small\textbf{DRAFT: not a certified design}}%
+  \fancyhead[R]{\small SDC-V 0.2.0 technical report}%
+  \fancyfoot[C]{\small\thepage}%
+  \renewcommand{\headrulewidth}{0.4pt}}
+
+\hypersetup{pdftitle={SDC-V: Structural Design Copilot with Deterministic Verifier. Technical Report},
+            pdfsubject={SDC-V version 0.2.0, IS 456:2000},
+            pdfkeywords={IS 456:2000, reinforced concrete beam, deterministic verifier, LLM guardrails}}
+
+\begin{document}
+
+% ================================================================ title page
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{2.2cm}
+{\Huge\bfseries SDC-V\par}
+\vspace{0.5cm}
+{\LARGE Structural Design Copilot\\[2pt] with Deterministic Verifier\par}
+\vspace{1.0cm}
+{\Large Technical Report\par}
+\vspace{2.0cm}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Software version & 0.2.0 \\
+Code edition     & IS 456:2000 \\
+Report date      & 15 November 2026 \\
+Subject          & Singly reinforced rectangular RCC beams, limit state method \\
+\bottomrule
+\end{tabular}
+\vfill
+\fbox{\parbox{0.86\textwidth}{\centering\small\textbf{\stamp}}}
+\vspace{1.0cm}
+\end{titlepage}
+
+\pagenumbering{roman}
+\setcounter{page}{2}
+
+% ================================================================ front matter
+\input{sections/abstract}
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\clearpage
+\pagenumbering{arabic}
+
+% ================================================================ body
+\input{sections/s01_introduction}
+\input{sections/s02_scope}
+\input{sections/s03_architecture}
+\input{sections/s04_methodology}
+\input{sections/s05_verification}
+\input{sections/s06_llm_guardrails}
+\input{sections/s07_dataflow}
+\input{sections/s08_api}
+\input{sections/s09_database}
+\input{sections/s10_frontend}
+\input{sections/s11_testing}
+\input{sections/s12_deployment}
+\input{sections/s13_performance}
+\input{sections/s14_limitations}
+\input{sections/s15_roadmap}
+\input{sections/s16_conclusion}
+
+% ================================================================ appendices
+\appendix
+\input{sections/appendix_a_env}
+\input{sections/appendix_b_tree}
+\input{sections/appendix_c_example}
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{Bibliography}
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,7 @@
+\chapter{Worked design examples}\label{app:example}
+
+This appendix shows two complete runs of the deterministic core. They were produced by executing \code{design_with_verification} (the calculator, the 19 rules and the reviser) in the repository; no value was typed by hand. The script \fpath{docs/report/tools/gen_example.py} regenerates the tables with \code{make example}. The inputs are the form values of a \code{POST /api/design} request, so no model is involved. Example~A is the request used in the README of the project. Example~B is the first case of the \code{needs_revision} category of the end-to-end benchmark (identifier R01), chosen because the submitted section is too shallow and the reviser must enlarge it.
+
+Quantities are shown with the precision of the calculator output. In the rule tables the value and the limit are in the unit given, and the operator is the direction of the comparison that the rule requires: the rule passes when the value $\le$ (or $\ge$) the limit.
+
+\input{sections/appendix_c_generated}

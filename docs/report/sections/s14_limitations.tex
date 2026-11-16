@@ -1,0 +1,14 @@
+\chapter{Limitations}\label{ch:limits}
+
+\begin{itemize}
+  \item \textbf{Narrow scope.} Singly reinforced rectangular beams, simply supported or cantilever, uniformly distributed load, IS~456:2000 only. Anything else is declined, not approximated.
+  \item \textbf{Draft output.} The tool does not certify, approve or sign off anything. The reviewer log records a name and a note and does not verify identity.
+  \item \textbf{Fitted and transcribed data.} The shear strength factor $\tau_c$ uses a closed-form fit of Table~19, the deflection modification factor uses an analytic fit of Figure~4, and the code tables are transcribed by hand. The golden tests compare them with reference values to the tolerances in Chapter~\ref{ch:test}, but no formal verification against the standard has been done.
+  \item \textbf{Fixed assumptions.} Two-legged 8~mm stirrups, 12~mm hanger bars, 20~mm aggregate, no moment redistribution, design shear at the support face, cover measured to the stirrup.
+  \item \textbf{Third-party model dependency.} Intake and narratives depend on an external API that can be unavailable, rate limited, or change its model availability. The model list in \code{config.py} records that, at the time it was tested, Pro models returned quota errors and older Flash models returned HTTP 404 on a free key.
+  \item \textbf{Number-level trace.} The trace checks that a number exists in the report, not that it is attached to the right quantity.
+  \item \textbf{Regular-expression guards.} They are tuned on a small labelled set and can be bypassed by paraphrase; the injection detector only logs.
+  \item \textbf{Access control.} A single shared token, no roles and no run ownership.
+  \item \textbf{Operations.} Single process and single host; the audit log is a local SQLite file without migrations. No Docker, CI, linting, type checking, lock file or frontend tests in the repository, and no licence file.
+  \item \textbf{Static example.} The Home page example is a precomputed fixture and does not change if the calculator changes until it is regenerated.
+\end{itemize}

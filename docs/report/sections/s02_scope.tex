@@ -1,0 +1,52 @@
+\chapter{Scope and system boundaries}\label{ch:scope}
+
+The supported scope is enforced in code, not by documentation. The limits below are the constraints of the \code{BeamInput} model in \fpath{backend/app/schemas.py}; the scope view of the interface and \code{GET /api/scope} read the same constraints, so the description cannot drift from the validation.
+
+\section{In-scope design problem}
+\sdcv{} designs singly reinforced rectangular beams, simply supported or cantilever, under a uniformly distributed load, by the limit state method of IS~456:2000.
+
+\begin{table}[H]
+\centering
+\caption{Accepted input ranges (\code{BeamInput}). The model also applies the cross-field rules listed below the table.}
+\label{tab:ranges}
+\begin{tabular}{@{}L{4.9cm}L{4.4cm}L{5.4cm}@{}}
+\toprule
+Quantity & Range or values & Notes \\
+\midrule
+Effective span $L$ (\code{span_m}) & $0 < L \le 15$ m & Cantilever length at most 6 m \\
+Width $b$ (\code{b_mm}) & 150 to 1000 mm & \\
+Overall depth $D$ (\code{D_mm}) & 200 to 2000 mm & $D/b \le 4$ \\
+Nominal cover & 20 to 100 mm & At least 100 mm less than $D$ \\
+Concrete grade $f_{ck}$ & M20, M25, M30, M35, M40 & Stored as 20 to 40 \\
+Steel grade $f_y$ & Fe250, Fe415, Fe500 & Stored as 250, 415, 500 \\
+Exposure & mild, moderate, severe, very severe, extreme & \\
+Support & simply supported, cantilever & \\
+Superimposed dead load & 0 to 500 kN/m & Excludes self-weight \\
+Live load & 0 to 500 kN/m & Dead plus live must be greater than zero \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The cross-field rules of the model are: $D/b \le 4$; a cantilever length of at most 6~m; dead plus live load greater than zero; and $D \ge \text{cover} + 100$~mm. Input may be given in other units; the normaliser converts lengths in mm, cm, m, in and ft, and line loads in kN/m, N/mm, N/m, t/m, kgf/m, lb/ft and kip/ft, and records each conversion. Area loads (for example kN/m$^2$) and point forces are rejected with an explanation, because a line load per metre of beam is required.
+
+\section{Declined features}
+The scope screen (Chapter~\ref{ch:llm}) detects the following features in the user's words and returns the status \code{out_of_scope}. Nothing is approximated.
+\begin{itemize}
+  \item flanged sections (T and L beams);
+  \item doubly reinforced beams;
+  \item continuous beams (two-span, multi-span);
+  \item slabs, columns, footings and foundations;
+  \item prestressed concrete;
+  \item design codes other than IS~456:2000 (for example Eurocode~2, ACI, AS~3600, BS~8110);
+  \item seismic and ductile detailing (IS~13920);
+  \item steel design (IS~800);
+  \item walls, retaining structures and deep beams;
+  \item point and concentrated loads.
+\end{itemize}
+Continuous, fixed or propped support conditions given as a support value are also declined by the normaliser.
+
+\section{Refused unsafe requests}
+Four classes of request return the status \code{refused} and no model is called: approving or certifying a design; reducing safety margins; removing structural elements; and skipping inspections. Mentions that merely use similar words in ordinary engineering language (for example ``approved drawings'') do not trigger the refusal, and a negated mention (for example ``not a T-beam'') does not trigger a decline.
+
+\section{Not provided}
+The repository does not provide user accounts, roles, multi-tenant isolation, a Docker or CI configuration, or a licence file. These are discussed in Chapters~\ref{ch:deploy} and~\ref{ch:limits}.

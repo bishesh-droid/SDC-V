@@ -1,0 +1,37 @@
+\chapter{Data flow}\label{ch:flow}
+
+\section{Entry points}
+Data enters the system in two ways. In the \emph{form} path the browser posts a \code{RawIntake} to \code{POST /api/design} or \code{POST /api/explore}. In the \emph{chat} path the browser posts messages, an optional pasted attachment and up to three images to \code{POST /api/chat}; images are resized and re-encoded as JPEG in the browser before upload.
+
+\section{Chat request path}
+Figure~\ref{fig:pipeline} shows the full path of a chat request from the scope screen to the JSON response, and the steps are as follows. Stage names in the trace are given in parentheses where they exist.
+\begin{enumerate}
+  \item \textbf{Scope screen} on the user's own words. An out-of-scope feature returns \code{out_of_scope}; an unsafe request returns \code{refused}. No model is called.
+  \item \textbf{Injection flags} on the brief and the attachment are written to \code{guardrail_events} and logged; they do not block.
+  \item If neither a Gemini key nor a local intake model is available, the result is \code{error}.
+  \item \textbf{PII redaction} of the transcript and the attachment (stage \code{Guardrails}).
+  \item \textbf{Snapshot transcription} (stage \code{Snapshot}), only when a vision backend is configured.
+  \item \textbf{Intake} by the model (stage \code{Brief}): JSON with an intent, extracted fields and, for images, a verbatim transcription.
+  \item \textbf{Intent handling.} \code{unsafe_request} returns \code{refused}; \code{out_of_scope} or \code{not_a_beam_brief} returns \code{out_of_scope}, subject to the override for ``details missing'' described in Chapter~\ref{ch:llm}.
+  \item \textbf{Grounding} of every extracted number, and the factored-load check.
+  \item \textbf{Normalisation and range validation} (stage \code{Guardrails}). The outcome is a validated \code{BeamInput}, or \code{needs_info}, \code{rejected} or \code{out_of_scope}.
+  \item \textbf{Calculator, verifier and reviser loop} (stages \code{Calculator}, \code{Verifier}, \code{Reviser}), as in Figure~\ref{fig:loop}.
+  \item \textbf{Report data}, pre-formatted strings from the verified result.
+  \item \textbf{Narrative} (stage \code{Narrative}), model-written with the number trace, or the template.
+  \item \textbf{Section sketch}, a server-side SVG of the cross-section.
+  \item \textbf{Audit write} (stage \code{Audit}) of the full \code{RunResult}, then the JSON response.
+\end{enumerate}
+The form path starts at step 9: it has no scope screen on free text, no intake and no grounding. Its narrative still uses the model when a key is configured.
+
+\begin{figure}[p]
+\centering
+\input{figures/fig_pipeline}
+\caption{Request pipeline for \code{POST /api/chat}. Blue stages are deterministic code, orange stages touch the language model, and the dashed stage runs only when a vision backend is configured. Grey boxes on the right are early exits, each returned with HTTP 200 and a \code{status} field.}
+\label{fig:pipeline}
+\end{figure}
+
+\section{Per-stage trace}
+Each run stores the timing of its stages as \code{TraceStep} records (stage, origin \code{deterministic} or \code{llm}, milliseconds, status). A stage that runs more than once, such as the calculator in the reviser loop, is summed. The trace is presentation only: it is never hashed, fingerprinted or compared. The model attempts of the run (model, outcome, milliseconds) are stored in \code{llm_attempts}.
+
+\section{Storage and response}
+The full \code{RunResult} and the tool versions are stored as JSON in the \code{runs} table (Chapter~\ref{ch:db}). Chat messages are stored redacted; the attachment is not stored, only its length; images are not stored, only their count. Structured form values are stored as submitted. The response is the \code{RunResult} JSON, and the browser renders every number from it. The Markdown report endpoint rebuilds a report from the stored record, not from the model.

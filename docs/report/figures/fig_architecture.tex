@@ -1,0 +1,36 @@
+% High-level four-layer architecture. Styles det, llm, neu and flow come from main.tex.
+{\hyphenpenalty=10000\exhyphenpenalty=10000
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % layer 1: browser
+  \node[neu,text width=14.2cm,minimum height=1.1cm] (l1) at (0,0)
+    {\textbf{Layer 1. Browser interface} (\texttt{frontend/})\\[-1pt]\scriptsize static HTML, CSS and native ES modules; nine views, themes, command palette, chart viewer};
+  % layer 2: proxy
+  \node[neu,text width=14.2cm,minimum height=1.1cm] (l2) at (0,-1.9)
+    {\textbf{Layer 2. Optional Node proxy} (\texttt{frontend/server.mjs})\\[-1pt]\scriptsize serves an asset allowlist and forwards \texttt{/api/*} to the backend};
+  % layer 3: backend container
+  \node[draw=detline,rounded corners=3pt,thick,minimum width=14.6cm,minimum height=7.1cm,anchor=north] (l3) at (0,-2.9) {};
+  \node[font=\small\bfseries,anchor=north west,text=detline] at ($(l3.north west)+(0.2,-0.1)$) {Layer 3. FastAPI backend (\texttt{backend/app/})};
+  \node[det,text width=6.2cm] (mw) at (-3.6,-4.35) {Request middleware\\[-1pt]\scriptsize token check, rate limit, security headers, request log};
+  \node[det,text width=6.2cm] (rt) at (3.6,-4.35) {Routes (\texttt{main.py})\\[-1pt]\scriptsize design, chat, explore, runs, health, reference};
+  \node[det,text width=13.4cm] (pl) at (0,-5.7) {Pipeline (\texttt{pipeline.py}): status vocabulary, per-stage trace, \texttt{design\_with\_verification}};
+  \node[det,text width=2.9cm] (gr) at (-5.1,-7.05) {Guardrails\\[-1pt]\scriptsize\texttt{input.py}\\\texttt{output.py}};
+  \node[det,text width=2.9cm] (ca) at (-1.7,-7.05) {Calculator\\[-1pt]\scriptsize\texttt{is456/}};
+  \node[det,text width=2.9cm] (ve) at (1.7,-7.05) {Verifier\\[-1pt]\scriptsize 19 rules};
+  \node[det,text width=2.9cm] (re) at (5.1,-7.05) {Reviser\\[-1pt]\scriptsize 25 mm steps};
+  \node[det,text width=3.9cm] (rp) at (-4.5,-8.5) {Report, sketch, explorer, export};
+  \node[llm,text width=3.9cm] (lc) at (0,-8.5) {Model client\\[-1pt]\scriptsize\texttt{llm/}: intake, writer};
+  \node[det,text width=3.9cm] (au) at (4.5,-8.5) {Audit log\\[-1pt]\scriptsize\texttt{audit.py}};
+  % layer 4
+  \node[neu,text width=6.2cm,minimum height=1.1cm] (db) at (-3.6,-11.3) {\textbf{Layer 4.} SQLite file\\[-1pt]\scriptsize\texttt{backend/data/audit.db}, table \texttt{runs}};
+  \node[llm,text width=6.2cm,minimum height=1.1cm] (gm) at (3.6,-11.3) {\textbf{Layer 4.} Google Gemini REST API\\[-1pt]\scriptsize \texttt{generateContent} (external service)};
+  % arrows
+  \draw[flow] (l1) -- (l2);
+  \draw[flow] (l2) -- ($(l3.north)+(0,0)$);
+  \draw[flow] (au.south) -- ++(0,-0.55) -| (db.north);
+  \draw[flow] (lc.south) -- ++(0,-0.55) -| (gm.north);
+  \draw[flow] (mw.east) -- (rt.west);
+  \draw[flow] (rt.south) -- (rt.south |- pl.north);
+\end{tikzpicture}}
+
+\vspace{4pt}
+{\small\detkey{} deterministic code \quad \llmkey{} touches the language model \quad \neukey{} browser, proxy, storage}

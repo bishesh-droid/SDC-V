@@ -1,0 +1,40 @@
+\chapter{Frontend}\label{ch:frontend}
+
+\section{Technology}
+The interface is static HTML, CSS and native ES modules in \fpath{frontend/}. There is no bundler, transpiler or package dependency; \fpath{package.json} has no dependencies and \code{npm start} runs \code{node server.mjs}, which requires Node 18 or later. The backend serves the same files from \code{/static/{name}} through an allowlist, so the interface also works without Node.
+
+\section{Views}
+The router in \code{chrome.js} defines nine views (Table~\ref{tab:views}). The project README states eight; the ninth, the test-case view, is present in the code (\code{NAV}, \code{index.html}, \code{tests.js}).
+
+\begin{table}[H]
+\centering
+\caption{Views of the interface, from \code{NAV} in \code{chrome.js}.}\label{tab:views}
+\begin{tabular}{@{}llL{8.4cm}@{}}
+\toprule Label & Module & Purpose \\ \midrule
+Home & \code{home.js} & Plays a precomputed example (\code{fixture.js}, generated once from the real calculator); nothing is run or logged \\
+Assistant & \code{chat.js} & Natural-language design through \code{POST /api/chat}, with attachment and images \\
+Form design & \code{design.js} & Structured design through \code{POST /api/design} \\
+Explore sections & \code{explore.js} & The what-if explorer \\
+Knowledge base & \code{kb.js} & Search over the 105 reference entries, with charts (\code{kbcharts.js}) \\
+Expert system & \code{system.js} & Facts, rules, meta-rules, module flow and endpoints, generated from the running code \\
+History & \code{history.js} & Audit log browser with filters, statistics, CSV export and the review form \\
+Test cases & \code{tests.js} & 100 varied cases (\code{testcases.js}) that can be loaded into the form or the assistant, or run, against expected outcomes \\
+Scope \& status & \code{scope.js} & Supported scope, health, optional live model check \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Result rendering}
+\code{result.js} renders a design result for the form, history and assistant views: a verdict dashboard, the rule grid, utilisation bars, an attention list, design values, drawings, the revision list, the narrative, the trace waterfall, the model attempt chain, actions and the review form. Drawings (\code{beam.js}) are inline SVG produced from the numbers returned by the API: cross-section, elevation, shear force and bending moment diagrams, strain diagram and an input-only preview.
+
+\section{Themes}
+There are light and dark themes and a system preference. The choice is stored under the key \code{sdcv_theme} in local storage and is applied before first paint by \fpath{theme-init.js}. All colours are tokens in \fpath{theme.css}; deterministic output and language-model output are coloured differently, and green, amber and red are reserved for verdicts. The same distinction is used in the figures of this report. A print stylesheet is part of \fpath{styles.css}.
+
+\section{Command palette}
+The command palette opens with Ctrl+K (Cmd+K on macOS). It offers navigation to each view, running the Home example, searching the knowledge base, exporting the history as CSV and copying the rules fingerprint.
+
+\section{Chart viewer}
+\code{viewer.js} opens any beam drawing or knowledge-base chart at a large size with zoom and pan, and offers SVG or PNG download.
+
+\section{Client-side security}
+The Content Security Policy forbids inline scripts. The API token entered in the browser is kept in \code{sessionStorage} for that tab only; the 401 handler of the API client asks for it again. The HTML escaping helper in \code{core.js} is used when rendering model-derived text.
